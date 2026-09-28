@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+*.egg
+dist/
+build/
+*.so
+
+# Virtualenvs / conda
+.venv/
+venv/
+env/
+
+# Tooling / OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Local dumps from examples/run.py and viz smoke tests
+/*.png
+/*.jpg
+/*.jpeg
