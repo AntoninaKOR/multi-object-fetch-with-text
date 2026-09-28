@@ -30,6 +30,22 @@ The following arguments are used to configure the environments and can be tested
 - `environment`: Selects the environment to run and can be in `Reach`, `Push`, and `Pick`.
 - `task`: Selects which task to run and can be in `Red`, `Reddest`, `Odd`, and `OddGroups`.
 - `num_distractors`: Number of distractor targets/blocks to use in the environment.
+- `no_language`: Disable HomeGrid-style parallel token streaming.
+- `no_viz`: Disable the on-frame instruction overlay.
+
+By default `examples/run.py` wraps the env in `LanguageWrapper`, which streams one T5 token per step in parallel with actions (`token`, `token_embed` in the observation).
+
+## Language embeddings
+Task instructions are a closed set listed in `multi_object_fetch/language/sentences.txt`. Token ids and T5-small embeddings are precomputed into `multi_object_fetch/language/embeds.pkl` so the environment does not need a language model at runtime.
+
+A cached `embeds.pkl` is included in the repo. Rebuild it after editing `sentences.txt`:
+```
+pip install torch transformers
+python scripts/embed_offline.py \
+  --infile multi_object_fetch/language/sentences.txt \
+  --outfile multi_object_fetch/language/embeds.pkl \
+  --model t5
+```
 
 ## Credits
 This repository is an extension of the environments in [fetch-block-construction](https://github.com/richardrl/fetch-block-construction).

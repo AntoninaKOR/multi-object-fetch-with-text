@@ -16,6 +16,7 @@ import shutil
 import tempfile
 from pathlib import Path
 from importlib.resources import files
+from multi_object_fetch.language.instructions import build_instruction
 
 
 def prepare_fetch_assets() -> Path:
@@ -119,7 +120,8 @@ class ColorsMixin(ABC):
 class MultiObjectFetchEnv(fetch_env.FetchEnv, gym_utils.EzPickle, ColorsMixin, ABC):
     def __init__(self, initial_qpos: Dict[str, Any], obs_type: str = "dictstate", object_size: float = 0.045,
                  target_size: float = 0.04, robot_configuration: str = "default", viewpoint: str = "frontview",
-                 randomize_background_color: bool = False, randomize_table_color: bool = False) -> None:
+                 randomize_background_color: bool = False, randomize_table_color: bool = False,
+                 environment: str = "Reach", task: str = "Red") -> None:
         """Initializes a new multi-object Fetch environment.
 
         Args:
@@ -128,6 +130,8 @@ class MultiObjectFetchEnv(fetch_env.FetchEnv, gym_utils.EzPickle, ColorsMixin, A
             target_size (float): The size of the target object in the environment.
             robot_configuration (str): The variant of the robot to use.
             viewpoint (str): The camera viewpoint to use for rendering.
+            environment (str): High-level motor skill: Reach, Push, or Pick.
+            task (str): Relational color task: Red, Reddest, Odd, or OddGroups.
         """
         self.obs_type = obs_type
         self.object_size = object_size
@@ -136,6 +140,9 @@ class MultiObjectFetchEnv(fetch_env.FetchEnv, gym_utils.EzPickle, ColorsMixin, A
         self.viewpoint = viewpoint
         self.randomize_background_color = randomize_background_color
         self.randomize_table_color = randomize_table_color
+        self.environment = environment
+        self.task = task
+        self.instruction = build_instruction(environment, task)
 
     def render(self, mode='human', size=None):
         self._render_callback()
@@ -192,10 +199,12 @@ class ReachEnv(MultiObjectFetchEnv):
     def __init__(self, initial_qpos: Dict[str, Any], obs_type: str = "dictstate", object_size: float = 0.045,
                  target_size: float = 0.04, robot_configuration: str = "default", viewpoint: str = "frontview",
                  num_distractors: int = 1, reward_type: str = "Dense", task: str = "Red", width: int = 512,
-                 height: int = 512) -> None:
-        super().__init__(initial_qpos, obs_type, object_size, target_size, robot_configuration, viewpoint)
+                 height: int = 512, environment: str = "Reach") -> None:
+        super().__init__(
+            initial_qpos, obs_type, object_size, target_size, robot_configuration, viewpoint,
+            environment=environment, task=task,
+        )
         self.num_distractors = num_distractors
-        self.task = task
         self.width = width
         self.height = height
 
@@ -211,7 +220,7 @@ class ReachEnv(MultiObjectFetchEnv):
             obs_type=obs_type, render_size=0)
 
         gym_utils.EzPickle.__init__(self, initial_qpos, obs_type, object_size, target_size, robot_configuration,
-                                    viewpoint, num_distractors, reward_type, task, width, height)
+                                    viewpoint, num_distractors, reward_type, task, width, height, environment)
         os.remove(MODEL_XML_PATH)
 
 
@@ -325,12 +334,15 @@ class ManipulateEnv(MultiObjectFetchEnv):
     def __init__(self, initial_qpos: Dict[str, Any], obs_type: str = "dictstate", object_size: float = 0.045,
                  target_size: float = 0.04, robot_configuration: str = "default", viewpoint: str = "frontview",
                  num_distractors: int = 1, reward_type: str = "Dense", task: str = "Red", width: int = 512,
-                 height: int = 512, target_in_the_air=True, block_gripper=False) -> None:
-        super().__init__(initial_qpos, obs_type, object_size, target_size, robot_configuration, viewpoint)
+                 height: int = 512, target_in_the_air=True, block_gripper=False,
+                 environment: str = "Pick") -> None:
+        super().__init__(
+            initial_qpos, obs_type, object_size, target_size, robot_configuration, viewpoint,
+            environment=environment, task=task,
+        )
         self.num_distractors = num_distractors
         self.num_blocks = num_distractors + 1
         self.object_names = ['object{}'.format(i) for i in range(self.num_blocks)]
-        self.task = task
         self.width = width
         self.height = height
 
@@ -347,7 +359,7 @@ class ManipulateEnv(MultiObjectFetchEnv):
             initial_qpos=initial_qpos, reward_type=reward_type, obs_type=obs_type, render_size=0)
         gym_utils.EzPickle.__init__(self, initial_qpos, obs_type, object_size, target_size, robot_configuration,
                                     viewpoint, num_distractors, reward_type, task, width, height, target_in_the_air,
-                                    block_gripper)
+                                    block_gripper, environment)
         os.remove(MODEL_XML_PATH)
 
     def _reset_sim(self):

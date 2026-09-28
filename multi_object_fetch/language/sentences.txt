@@ -1,0 +1,9 @@
+reach the red object
+reach the reddest object
+reach the odd one out
+push the red object
+push the reddest object
+push the odd one out
+pick up the red object
+pick up the reddest object
+pick up the odd one out

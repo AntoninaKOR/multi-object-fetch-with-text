@@ -20,7 +20,8 @@ for environment in ['Reach', 'Push', 'Pick']:
                     'reward_type': reward_type,
                     'initial_qpos': initial_qpos,
                     'num_distractors': num_distractors,
-                    'task': task
+                    'task': task,
+                    'environment': environment,
                 }
 
                 if environment != 'Reach':
@@ -30,8 +31,6 @@ for environment in ['Reach', 'Push', 'Pick']:
                     if environment == 'Push':
                         kwargs['target_in_the_air'] = False
                         kwargs['block_gripper'] = True
-
-
 
                 register(
                     id=f'{environment}{task}_{num_distractors}Distractors_{reward_type}-v1',
