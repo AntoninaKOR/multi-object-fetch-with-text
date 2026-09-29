@@ -32,9 +32,13 @@ for environment in ['Reach', 'Push', 'Pick']:
                         kwargs['target_in_the_air'] = False
                         kwargs['block_gripper'] = True
 
+                max_episode_steps = 50 if environment == 'Reach' else 100
+                if task == 'Multicolor':
+                    max_episode_steps *= 2
+
                 register(
                     id=f'{environment}{task}_{num_distractors}Distractors_{reward_type}-v1',
                     entry_point='multi_object_fetch.env:ReachEnv' if environment == 'Reach' else 'multi_object_fetch.env:ManipulateEnv',
                     kwargs=kwargs,
-                    max_episode_steps=50 if environment == 'Reach' else 100,
+                    max_episode_steps=max_episode_steps,
                 )
