@@ -1,4 +1,8 @@
-from multi_object_fetch.language.instructions import build_instruction, INSTRUCTIONS
+from multi_object_fetch.language.instructions import (
+    COLOR_NAMES,
+    INSTRUCTIONS,
+    build_instruction,
+)
 from multi_object_fetch.language.language_wrappers import LanguageWrapper
 
-__all__ = ["LanguageWrapper", "build_instruction", "INSTRUCTIONS"]
+__all__ = ["LanguageWrapper", "COLOR_NAMES", "build_instruction", "INSTRUCTIONS"]

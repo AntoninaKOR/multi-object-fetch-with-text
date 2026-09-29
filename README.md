@@ -2,7 +2,7 @@
 
 Visual RL environments for multi-object reasoning and manipulation with a Fetch robot. 
 The following table shows examples of the different environments (Reach, Push, and Pick) as well as the relational
-reasoning tasks (Red, Reddest, Odd, OddGroups).
+reasoning tasks (Red, Reddest, Odd, OddGroups). Multicolor samples a random target color each episode and names it in the instruction.
 
 |           |                             Red                             |                            Reddest                             |                           Odd                            |                           OddGroups                            |
 |:----------|:-----------------------------------------------------------:|:--------------------------------------------------------------:|:--------------------------------------------------------:|:--------------------------------------------------------------:|
@@ -24,11 +24,15 @@ To verify that the installation was successful, environments can be run with a r
 python examples/run.py --policy user --task Odd --num_distractors 2 --environment Pick
 ```
 
+Multicolor: each episode picks a random target color; the streamed instruction names that color (e.g. `pick up the turquoise object`):
+```
+python examples/run.py --policy random --task Multicolor --num_distractors 2 --environment Pick
+```
 
 The following arguments are used to configure the environments and can be tested in `examples/run.py`:
 - `policy`: Whether to control the agent via the keyboard or run a random policy be in `random`, `user`.
 - `environment`: Selects the environment to run and can be in `Reach`, `Push`, and `Pick`.
-- `task`: Selects which task to run and can be in `Red`, `Reddest`, `Odd`, and `OddGroups`.
+- `task`: Selects which task to run and can be in `Red`, `Reddest`, `Odd`, `OddGroups`, and `Multicolor`.
 - `num_distractors`: Number of distractor targets/blocks to use in the environment.
 - `no_language`: Disable HomeGrid-style parallel token streaming.
 - `no_viz`: Disable the on-frame instruction overlay.

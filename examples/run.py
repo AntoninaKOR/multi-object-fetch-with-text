@@ -29,7 +29,6 @@ env.render(mode='rgb_array')
 
 gui = GUI(fps=env.metadata['video.frames_per_second'])
 
-print(f"Instruction: {getattr(env, 'instruction', None)}")
 if args.policy == "user":
     print("Running GUI:")
     print(tabulate([['W', 'forward'], ['S', 'backward'], ['A', 'left'], ['D', 'right'], ['shift', 'down'], ['space', 'up'], ['E', 'open gripper'], ['Q', 'close gripper']], headers=['Key', 'Action']) + "\n")
@@ -41,6 +40,7 @@ max_episode_steps = env.spec.max_episode_steps if env.spec is not None else 100
 episode = 0
 while True:
     obs, done = env.reset(), False
+    print(f"Instruction: {getattr(env, 'instruction', None)}")
     episode += 1
     pbar = tqdm.tqdm(range(max_episode_steps))
     pbar.set_description(f"Episode {episode}")

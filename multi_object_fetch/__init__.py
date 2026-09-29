@@ -2,7 +2,7 @@ from gym.envs.registration import register
 
 
 for environment in ['Reach', 'Push', 'Pick']:
-    for task in ['Red', 'Reddest', 'Odd', 'OddGroups']:
+    for task in ['Red', 'Reddest', 'Odd', 'OddGroups', 'Multicolor']:
         for num_distractors in range(0, 5):
             for reward_type in ['Sparse', 'Dense']:
                 if task.startswith('Odd') and num_distractors < 2:  # Odd-one-out needs at least two others.

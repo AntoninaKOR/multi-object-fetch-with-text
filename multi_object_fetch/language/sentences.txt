@@ -7,3 +7,48 @@ push the odd one out
 pick up the red object
 pick up the reddest object
 pick up the odd one out
+reach the green object
+reach the dark slate gray object
+reach the saddle brown object
+reach the midnight blue object
+reach the dark green object
+reach the dark khaki object
+reach the turquoise object
+reach the orange object
+reach the yellow object
+reach the violet red object
+reach the blue object
+reach the spring green object
+reach the thistle object
+reach the magenta object
+reach the dodger blue object
+push the green object
+push the dark slate gray object
+push the saddle brown object
+push the midnight blue object
+push the dark green object
+push the dark khaki object
+push the turquoise object
+push the orange object
+push the yellow object
+push the violet red object
+push the blue object
+push the spring green object
+push the thistle object
+push the magenta object
+push the dodger blue object
+pick up the green object
+pick up the dark slate gray object
+pick up the saddle brown object
+pick up the midnight blue object
+pick up the dark green object
+pick up the dark khaki object
+pick up the turquoise object
+pick up the orange object
+pick up the yellow object
+pick up the violet red object
+pick up the blue object
+pick up the spring green object
+pick up the thistle object
+pick up the magenta object
+pick up the dodger blue object

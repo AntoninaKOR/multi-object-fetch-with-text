@@ -6,7 +6,7 @@ import numpy as np
 from fetch_block_construction.envs.robotics.fetch.construction import FetchBlockConstructionEnv
 from fetch_block_construction.envs.robotics import fetch_env
 from gym import utils as gym_utils
-from typing import Dict, Any
+from typing import Dict, Any, Tuple
 from multi_object_fetch.assets.generate_multi_camera_xml import generate_multi_camera_xml
 from mujoco_py.generated import const
 from mujoco_py.modder import TextureModder
@@ -16,7 +16,8 @@ import shutil
 import tempfile
 from pathlib import Path
 from importlib.resources import files
-from multi_object_fetch.language.instructions import build_instruction
+from mujoco_py.builder import MujocoException
+from multi_object_fetch.language.instructions import COLOR_NAMES, build_instruction
 
 
 def prepare_fetch_assets() -> Path:
@@ -47,6 +48,11 @@ class ColorsMixin(ABC):
                          (216, 191, 216),
                          (255, 0, 255),
                          (30, 144, 255)]) / 255
+
+    @property
+    def color_names(self) -> Tuple[str, ...]:
+        """English names aligned with ``colors`` indices (see COLOR_NAMES)."""
+        return COLOR_NAMES
 
     @staticmethod
     def delta_e_cie2000(lab1, lab2, kL=1, kC=1, kH=1):
@@ -131,7 +137,7 @@ class MultiObjectFetchEnv(fetch_env.FetchEnv, gym_utils.EzPickle, ColorsMixin, A
             robot_configuration (str): The variant of the robot to use.
             viewpoint (str): The camera viewpoint to use for rendering.
             environment (str): High-level motor skill: Reach, Push, or Pick.
-            task (str): Relational color task: Red, Reddest, Odd, or OddGroups.
+            task (str): Relational color task: Red, Reddest, Odd, OddGroups, or Multicolor.
         """
         self.obs_type = obs_type
         self.object_size = object_size
@@ -142,7 +148,12 @@ class MultiObjectFetchEnv(fetch_env.FetchEnv, gym_utils.EzPickle, ColorsMixin, A
         self.randomize_table_color = randomize_table_color
         self.environment = environment
         self.task = task
-        self.instruction = build_instruction(environment, task)
+        # Multicolor instruction depends on the episode's target color (set in _reset_sim).
+        self.instruction = (
+            ""
+            if task == "Multicolor"
+            else build_instruction(environment, task)
+        )
 
     def render(self, mode='human', size=None):
         self._render_callback()
@@ -177,7 +188,15 @@ class MultiObjectFetchEnv(fetch_env.FetchEnv, gym_utils.EzPickle, ColorsMixin, A
         pass
 
     def step(self, action):
-        obs, reward, done, info = super().step(action)
+        try:
+            obs, reward, done, info = super().step(action)
+        except MujocoException:
+            # Random / large actions can blow up contacts; end the episode cleanly.
+            self.sim.set_state(self.initial_state)
+            self.sim.forward()
+            obs = self._get_obs()
+            info = {"success": False, "unstable": True}
+            return obs, 0.0, True, info
         info["success"] = self.success()
         return obs, reward, done, info
 
@@ -282,6 +301,23 @@ class ReachEnv(MultiObjectFetchEnv):
            distractor_colors = [c for c in sampled_colors if not np.array_equal(c, reddest_color)]
            for i in range(self.num_distractors):
                self.sim.model.site_rgba[self.sim.model.site_name2id(f'distractor{i}')][:3] = distractor_colors[i]
+
+        elif self.task == 'Multicolor':
+            assert len(self.color_names) == len(self.colors)
+            num_colors = 1 + self.num_distractors
+            color_indices = self.np_random.choice(
+                len(self.colors), size=num_colors, replace=False
+            )
+            target_idx = int(color_indices[0])
+            self.sim.model.site_rgba[self.sim.model.site_name2id('target0')][:3] = self.colors[target_idx]
+            self.instruction = build_instruction(
+                self.environment, self.task, color_name=self.color_names[target_idx]
+            )
+            for i in range(self.num_distractors):
+                distractor_idx = int(color_indices[i + 1])
+                self.sim.model.site_rgba[self.sim.model.site_name2id(f'distractor{i}')][:3] = (
+                    self.colors[distractor_idx]
+                )
 
         else:
             raise ValueError("Invalid task: {}".format(self.task))
@@ -409,6 +445,24 @@ class ManipulateEnv(MultiObjectFetchEnv):
            distractor_colors = [c for c in sampled_colors if not np.array_equal(c, reddest_color)]
            for i, object_name in enumerate(self.object_names[1:]):
                self.sim.model.geom_rgba[self.sim.model.geom_name2id(object_name)][:3] = distractor_colors[i]
+
+        elif self.task == 'Multicolor':
+            assert len(self.color_names) == len(self.colors)
+            color_indices = self.np_random.choice(
+                len(self.colors), size=self.num_blocks, replace=False
+            )
+            target_idx = int(color_indices[0])
+            self.sim.model.geom_rgba[self.sim.model.geom_name2id(self.object_names[0])][:3] = (
+                self.colors[target_idx]
+            )
+            self.instruction = build_instruction(
+                self.environment, self.task, color_name=self.color_names[target_idx]
+            )
+            for i, object_name in enumerate(self.object_names[1:]):
+                distractor_idx = int(color_indices[i + 1])
+                self.sim.model.geom_rgba[self.sim.model.geom_name2id(object_name)][:3] = (
+                    self.colors[distractor_idx]
+                )
 
         else:
             raise ValueError("Invalid task: {}".format(self.task))

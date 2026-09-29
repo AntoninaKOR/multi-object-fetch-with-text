@@ -1,7 +1,26 @@
 """Closed-set task instructions for multi-object Fetch."""
 
-from typing import Dict, Tuple
+from typing import Dict, Optional, Tuple
 
+# Must stay aligned with ColorsMixin.colors index order in env.py.
+COLOR_NAMES = (
+    "green",
+    "dark slate gray",
+    "saddle brown",
+    "midnight blue",
+    "dark green",
+    "dark khaki",
+    "turquoise",
+    "red",
+    "orange",
+    "yellow",
+    "violet red",
+    "blue",
+    "spring green",
+    "thistle",
+    "magenta",
+    "dodger blue",
+)
 
 _ACTION = {
     "Reach": "reach",
@@ -17,17 +36,39 @@ _TARGET = {
 }
 
 
-def build_instruction(environment: str, task: str) -> str:
-    """Return the canonical English instruction for an environment/task pair."""
+def build_instruction(
+    environment: str, task: str, color_name: Optional[str] = None
+) -> str:
+    """Return the canonical English instruction for an environment/task pair.
+
+    For Multicolor, pass ``color_name`` (from COLOR_NAMES) chosen for this episode.
+    """
     if environment not in _ACTION:
         raise ValueError(f"Unknown environment: {environment}")
+    if task == "Multicolor":
+        if color_name is None:
+            raise ValueError("Multicolor requires color_name")
+        if color_name not in COLOR_NAMES:
+            raise ValueError(f"Unknown color name: {color_name}")
+        return f"{_ACTION[environment]} the {color_name} object"
     if task not in _TARGET:
         raise ValueError(f"Unknown task: {task}")
     return f"{_ACTION[environment]} {_TARGET[task]}"
 
 
-INSTRUCTIONS: Dict[Tuple[str, str], str] = {
+INSTRUCTIONS: Dict[Tuple[str, ...], str] = {
     (environment, task): build_instruction(environment, task)
     for environment in _ACTION
     for task in _TARGET
 }
+
+# Episode-varying Multicolor utterances for all environments.
+INSTRUCTIONS.update(
+    {
+        (environment, "Multicolor", color_name): build_instruction(
+            environment, "Multicolor", color_name=color_name
+        )
+        for environment in _ACTION
+        for color_name in COLOR_NAMES
+    }
+)
