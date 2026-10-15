@@ -395,8 +395,13 @@ class ReachEnv(MultiObjectFetchEnv):
 
 
 class ManipulateEnv(MultiObjectFetchEnv):
-    LIFT_THRESHOLD = 0.02  # object0 counts as lifted this far above the table.
-    HOLD_THRESHOLD = 0.03  # A lifted object0 counts as held this close to the gripper.
+    # Subtask definitions for the evaluation metrics (see docs/metrics.md).
+    FINGERS = ('robot0:l_gripper_finger_link', 'robot0:r_gripper_finger_link')
+    LIFT_THRESHOLD = 0.01  # Supported only by the fingers and this far above its resting height.
+    NEEDS_LIFT_HEIGHT = 0.05  # Goals at least this high cannot be reached by pushing (= SUCCESS_THRESHOLD).
+    GRASP_GAP_TOLERANCE = 0.005  # Finger gap may differ this much from the object width (soft contacts).
+    GRASP_CENTER_TOLERANCE = 0.01  # Object center this close to the midpoint between the fingers.
+    PLACED_SPEED = 0.01  # A placed object moves slower than this (m/s).
 
     def __init__(self, initial_qpos: Dict[str, Any], obs_type: str = "dictstate", object_size: float = 0.045,
                  target_size: float = 0.04, robot_configuration: str = "default", viewpoint: str = "frontview",
@@ -559,14 +564,73 @@ class ManipulateEnv(MultiObjectFetchEnv):
         info = super().episode_info()
         # Height of the goal above a block resting on the table (resting blocks sit within 1 mm of height_offset).
         info["goal_height"] = float(self.goal[2] - self.height_offset)
+        info["goal_needs_lift"] = info["goal_height"] >= self.NEEDS_LIFT_HEIGHT
         return info
 
     def step_info(self):
+        """Per-step subtask flags for object0.
+
+        grasped: both fingers are in contact with object0 (MuJoCo contacts).
+        grasped_geometric: cross-check from geometry only (finger gap equals the object's width
+            along the closing axis, and the object center lies between the finger pads).
+        lifted: object0 touches a finger and nothing else, and is above its resting height.
+        held: grasped and lifted.
+        placed: success and, for a goal that needs lifting, held at the goal; otherwise
+            released (not grasped), resting on the table and still.
+        """
         info = super().step_info()
         object_pos = np.squeeze(self.sim.data.get_site_xpos('object0')).copy()
         grip_pos = np.squeeze(self.sim.data.get_site_xpos('robot0:grip')).copy()
         info["object_lift"] = float(object_pos[2] - self.height_offset)
         info["grip_object_dist"] = float(np.linalg.norm(grip_pos - object_pos))
-        info["lifted"] = info["object_lift"] > self.LIFT_THRESHOLD
-        info["held"] = info["lifted"] and info["grip_object_dist"] < self.HOLD_THRESHOLD
+        info["object_speed"] = float(np.linalg.norm(self.sim.data.get_site_xvelp('object0')))
+
+        contacts = self._object0_contacts()
+        fingers = contacts & set(self.FINGERS)
+        others = contacts - set(self.FINGERS)
+        info["object_contacts"] = sorted(str(name) for name in contacts)
+        info["grasped"] = len(fingers) == 2
+        info.update(self._geometric_grasp())
+        info["lifted"] = bool(fingers) and not others and info["object_lift"] > self.LIFT_THRESHOLD
+        info["held"] = info["grasped"] and info["lifted"]
+        if self.episode_info()["goal_needs_lift"]:
+            info["placed"] = info["dist"] < self.SUCCESS_THRESHOLD and info["held"]
+        else:
+            info["placed"] = (info["dist"] < self.SUCCESS_THRESHOLD and not info["grasped"]
+                              and "table0" in others and info["object_speed"] < self.PLACED_SPEED)
         return info
+
+    def _object0_contacts(self):
+        """Names of the geoms in contact with object0 (None for unnamed geoms)."""
+        model, data = self.sim.model, self.sim.data
+        obj = model.geom_name2id('object0')
+        names = set()
+        for i in range(data.ncon):
+            contact = data.contact[i]
+            if contact.geom1 == obj:
+                names.add(model.geom_id2name(contact.geom2))
+            elif contact.geom2 == obj:
+                names.add(model.geom_id2name(contact.geom1))
+        return names
+
+    @staticmethod
+    def _half_extent(size, xmat, axis):
+        """Half-extent of a box geom along a world axis (accounts for the box's rotation)."""
+        return float(np.sum(size * np.abs(xmat.reshape(3, 3).T @ axis)))
+
+    def _geometric_grasp(self):
+        model, data = self.sim.model, self.sim.data
+        left, right = (model.geom_name2id(name) for name in self.FINGERS)
+        obj = model.geom_name2id('object0')
+        p_left, p_right = data.geom_xpos[left].copy(), data.geom_xpos[right].copy()
+        axis = (p_left - p_right) / np.linalg.norm(p_left - p_right)  # Closing axis.
+        gap = (np.linalg.norm(p_left - p_right) - self._half_extent(model.geom_size[left], data.geom_xmat[left], axis)
+               - self._half_extent(model.geom_size[right], data.geom_xmat[right], axis))
+        width = 2 * self._half_extent(model.geom_size[obj], data.geom_xmat[obj], axis)
+        offset = data.geom_xpos[obj] - (p_left + p_right) / 2
+        pad = data.geom_xmat[left].reshape(3, 3)
+        closing = int(np.argmax(np.abs(pad.T @ axis)))
+        between = all(abs(offset @ pad[:, i]) <= model.geom_size[left][i] for i in range(3) if i != closing)
+        grasped = (abs(gap - width) < self.GRASP_GAP_TOLERANCE and abs(offset @ axis) < self.GRASP_CENTER_TOLERANCE
+                   and between)
+        return {"finger_gap": float(gap), "object_width": float(width), "grasped_geometric": bool(grasped)}
