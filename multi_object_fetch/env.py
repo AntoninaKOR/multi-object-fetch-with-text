@@ -395,6 +395,9 @@ class ReachEnv(MultiObjectFetchEnv):
 
 
 class ManipulateEnv(MultiObjectFetchEnv):
+    LIFT_THRESHOLD = 0.02  # object0 counts as lifted this far above the table.
+    HOLD_THRESHOLD = 0.03  # A lifted object0 counts as held this close to the gripper.
+
     def __init__(self, initial_qpos: Dict[str, Any], obs_type: str = "dictstate", object_size: float = 0.045,
                  target_size: float = 0.04, robot_configuration: str = "default", viewpoint: str = "frontview",
                  num_distractors: int = 1, reward_type: str = "Dense", task: str = "Red", width: int = 512,
@@ -564,4 +567,6 @@ class ManipulateEnv(MultiObjectFetchEnv):
         grip_pos = np.squeeze(self.sim.data.get_site_xpos('robot0:grip')).copy()
         info["object_lift"] = float(object_pos[2] - self.height_offset)
         info["grip_object_dist"] = float(np.linalg.norm(grip_pos - object_pos))
+        info["lifted"] = info["object_lift"] > self.LIFT_THRESHOLD
+        info["held"] = info["lifted"] and info["grip_object_dist"] < self.HOLD_THRESHOLD
         return info

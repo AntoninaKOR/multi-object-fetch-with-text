@@ -14,7 +14,7 @@ if not hasattr(gym, 'GoalEnv'):
 from fetch_block_construction.envs.robotics import fetch_env  # noqa: E402
 from mujoco_py.builder import MujocoException  # noqa: E402
 
-import multi_object_fetch  # noqa: E402,F401  # gym registrations
+import multi_object_fetch.env  # noqa: E402  # also registers the gym envs
 from multi_object_fetch.language import LanguageWrapper
 from multi_object_fetch.language.instructions import COLOR_NAMES
 
@@ -43,6 +43,10 @@ def move_towards(env, pos, gripper):
 def check_step(info):
     assert info['success'] == (info['dist'] < env_threshold())
     assert info['unstable'] is False
+    if 'lifted' in info:
+        env_cls = multi_object_fetch.env.ManipulateEnv
+        assert info['lifted'] == (info['object_lift'] > env_cls.LIFT_THRESHOLD)
+        assert info['held'] == (info['lifted'] and info['grip_object_dist'] < env_cls.HOLD_THRESHOLD)
 
 
 def env_threshold():
@@ -74,6 +78,7 @@ def test_info_keys_and_constants(name):
         assert ('goal_height' in info) == manipulate
         assert ('object_lift' in info) == manipulate
         assert ('grip_object_dist' in info) == manipulate
+        assert ('lifted' in info) == manipulate and ('held' in info) == manipulate
         if name.startswith('Push'):
             assert info['goal_height'] == pytest.approx(0.0, abs=1e-6)
 
@@ -111,9 +116,9 @@ def test_pick_scripted_lift_and_hold():
                 check_step(info)
                 infos.append(info)
         lifts = np.array([i['object_lift'] for i in infos])
-        grips = np.array([i['grip_object_dist'] for i in infos])
-        held = (lifts > 0.02) & (grips < 0.03)
+        held = np.array([i['held'] for i in infos])
         assert lifts[0] == pytest.approx(0.0, abs=0.005)  # block starts resting on the table
+        assert not infos[0]['lifted'] and not infos[0]['held']
         lifted_episodes += held.any()
         print('max lift %.3f, held %s, final dist %.3f, goal height %.3f, success %s' % (
             lifts.max(), held.any(), infos[-1]['dist'], infos[-1]['goal_height'], infos[-1]['success']))
@@ -133,7 +138,8 @@ def test_unstable_step(name, monkeypatch):
     _, reward, done, info = env.step(env.action_space.sample())
     assert done and reward == 0.0
     assert info['success'] is False and info['unstable'] is True
-    assert 'dist' not in info and 'object_lift' not in info and 'grip_object_dist' not in info
+    for key in ('dist', 'object_lift', 'grip_object_dist', 'lifted', 'held'):
+        assert key not in info
     assert info['num_distractors'] == 2
     assert 0 <= info['target_color'] < len(COLOR_NAMES)
     assert ('goal_height' in info) == name.startswith('Pick')
