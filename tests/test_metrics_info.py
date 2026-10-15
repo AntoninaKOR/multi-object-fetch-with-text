@@ -50,9 +50,10 @@ def check_step(info):
     if 'lifted' in info:
         env_cls = multi_object_fetch.env.ManipulateEnv
         contacts = set(info['object_contacts'])
-        assert info['grasped'] == FINGERS.issubset(contacts)
-        assert info['lifted'] == (bool(contacts & FINGERS) and not (contacts - FINGERS)
-                                  and info['object_lift'] > env_cls.LIFT_THRESHOLD)
+        assert info['grasped'] == (FINGERS.issubset(contacts) and info['between_fingers'])
+        assert info['between_fingers'] == (abs(info['finger_gap'] - info['object_width']) < env_cls.GRASP_GAP_TOLERANCE
+                                           and abs(info['grasp_center_offset']) < env_cls.GRASP_CENTER_TOLERANCE)
+        assert info['lifted'] == (not (contacts - FINGERS) and info['object_lift'] > env_cls.LIFT_THRESHOLD)
         assert info['held'] == (info['grasped'] and info['lifted'])
         if info['placed']:
             assert info['success']
@@ -118,8 +119,8 @@ def test_info_keys_and_constants(name):
         assert ('goal_height' in info) == manipulate
         assert ('object_lift' in info) == manipulate
         assert ('grip_object_dist' in info) == manipulate
-        for key in ('lifted', 'held', 'grasped', 'grasped_geometric', 'placed', 'object_contacts',
-                    'finger_gap', 'object_width', 'object_speed', 'goal_needs_lift'):
+        for key in ('lifted', 'held', 'grasped', 'grasped_geometric', 'between_fingers', 'grasp_center_offset',
+                    'placed', 'object_contacts', 'finger_gap', 'object_width', 'object_speed', 'goal_needs_lift'):
             assert (key in info) == manipulate, key
         if name.startswith('Push'):
             assert info['goal_height'] == pytest.approx(0.0, abs=1e-6)
@@ -254,6 +255,32 @@ def test_edge_pinch_is_a_contact_grasp_but_not_geometric():
     assert pinched['grasped'] and not pinched['grasped_geometric']
     # It is a real grasp: the pinch lifts the cube with the fingers alone.
     assert any(i['held'] for i in infos) and max(i['object_lift'] for i in infos) > 0.1
+
+
+def test_push_with_closed_fingers_is_not_a_grasp():
+    """Pushing with the (blocked, closed) fingers presses both fingertips on one face of the block."""
+    env = make('PushRed_0Distractors_Dense-v1', seed=0)
+    env.reset()
+    obj, goal = site(env, 'object0'), env.goal.copy()
+    u = np.append((goal - obj)[:2] / np.linalg.norm((goal - obj)[:2]), 0)
+    behind = obj - u * 0.09
+    infos = run_plan(env, [(site(env, 'robot0:grip') + [0, 0, 0.15], 1.0, 4), (behind + [0, 0, 0.15], 1.0, 8),
+                           (behind + [0, 0, 0.005], 1.0, 6), (goal + [0, 0, 0.005], 1.0, 20)])
+    both_touch = [i for i in infos if FINGERS.issubset(i['object_contacts'])]
+    assert both_touch, 'the push should press both fingertips against the block'
+    assert all(i['finger_gap'] < 0.05 for i in both_touch)  # closed fingers, far narrower than the 9 cm block
+    assert not any(i['grasped'] or i['lifted'] or i['held'] for i in infos)
+
+
+def test_dropped_block_is_lifted_but_not_held():
+    env = make('PickRed_0Distractors_Dense-v1', seed=1)
+    reset_until(env, air_goal)
+    obj = site(env, 'object0')
+    infos = run_plan(env, pick_plan(obj, env.goal.copy())[:4] + [(obj + [0, 0, 0.15], 1.0, 15)])
+    falling = [i for i in infos[46:] if i['lifted'] and not i['grasped']]
+    assert falling, 'right after release the block is in the air without a grasp'
+    assert not any(i['held'] for i in falling)
+    assert not infos[-1]['lifted']  # back on the table
 
 
 @pytest.mark.parametrize('name', ['ReachMulticolor_2Distractors_Dense-v1', 'PickMulticolor_2Distractors_Dense-v1'])

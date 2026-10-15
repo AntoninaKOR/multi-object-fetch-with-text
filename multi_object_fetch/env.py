@@ -397,7 +397,7 @@ class ReachEnv(MultiObjectFetchEnv):
 class ManipulateEnv(MultiObjectFetchEnv):
     # Subtask definitions for the evaluation metrics (see docs/metrics.md).
     FINGERS = ('robot0:l_gripper_finger_link', 'robot0:r_gripper_finger_link')
-    LIFT_THRESHOLD = 0.01  # Supported only by the fingers and this far above its resting height.
+    LIFT_THRESHOLD = 0.01  # Touching nothing but the fingers and this far above its resting height.
     NEEDS_LIFT_HEIGHT = 0.05  # Goals at least this high cannot be reached by pushing (= SUCCESS_THRESHOLD).
     GRASP_GAP_TOLERANCE = 0.005  # Finger gap may differ this much from the object width (soft contacts).
     GRASP_CENTER_TOLERANCE = 0.01  # Object center this close to the midpoint between the fingers.
@@ -570,10 +570,13 @@ class ManipulateEnv(MultiObjectFetchEnv):
     def step_info(self):
         """Per-step subtask flags for object0.
 
-        grasped: both fingers are in contact with object0 (MuJoCo contacts).
-        grasped_geometric: cross-check from geometry only (finger gap equals the object's width
-            along the closing axis, and the object center lies between the finger pads).
-        lifted: object0 touches a finger and nothing else, and is above its resting height.
+        grasped: both fingers are in contact with object0 (MuJoCo contacts) and object0 is between
+            them: the finger gap equals its width along the closing axis and its center lies on
+            the line between the fingers. Two fingers pressed on one face (pushing) do not count.
+        grasped_geometric: stricter cross-check from geometry only: the gap and center conditions,
+            and the center also lies within the finger pads' extent (rejects edge pinches).
+        lifted: object0 is above its resting height and touches nothing except the fingers (no
+            table, no other block): carried, but also falling or knocked into the air.
         held: grasped and lifted.
         placed: success and, for a goal that needs lifting, held at the goal; otherwise
             released (not grasped), resting on the table and still.
@@ -589,9 +592,10 @@ class ManipulateEnv(MultiObjectFetchEnv):
         fingers = contacts & set(self.FINGERS)
         others = contacts - set(self.FINGERS)
         info["object_contacts"] = sorted(str(name) for name in contacts)
-        info["grasped"] = len(fingers) == 2
-        info.update(self._geometric_grasp())
-        info["lifted"] = bool(fingers) and not others and info["object_lift"] > self.LIFT_THRESHOLD
+        geometry = self._grasp_geometry()
+        info.update(geometry)
+        info["grasped"] = len(fingers) == 2 and geometry["between_fingers"]
+        info["lifted"] = not others and info["object_lift"] > self.LIFT_THRESHOLD
         info["held"] = info["grasped"] and info["lifted"]
         if self.episode_info()["goal_needs_lift"]:
             info["placed"] = info["dist"] < self.SUCCESS_THRESHOLD and info["held"]
@@ -618,7 +622,7 @@ class ManipulateEnv(MultiObjectFetchEnv):
         """Half-extent of a box geom along a world axis (accounts for the box's rotation)."""
         return float(np.sum(size * np.abs(xmat.reshape(3, 3).T @ axis)))
 
-    def _geometric_grasp(self):
+    def _grasp_geometry(self):
         model, data = self.sim.model, self.sim.data
         left, right = (model.geom_name2id(name) for name in self.FINGERS)
         obj = model.geom_name2id('object0')
@@ -630,7 +634,7 @@ class ManipulateEnv(MultiObjectFetchEnv):
         offset = data.geom_xpos[obj] - (p_left + p_right) / 2
         pad = data.geom_xmat[left].reshape(3, 3)
         closing = int(np.argmax(np.abs(pad.T @ axis)))
-        between = all(abs(offset @ pad[:, i]) <= model.geom_size[left][i] for i in range(3) if i != closing)
-        grasped = (abs(gap - width) < self.GRASP_GAP_TOLERANCE and abs(offset @ axis) < self.GRASP_CENTER_TOLERANCE
-                   and between)
-        return {"finger_gap": float(gap), "object_width": float(width), "grasped_geometric": bool(grasped)}
+        within_pads = all(abs(offset @ pad[:, i]) <= model.geom_size[left][i] for i in range(3) if i != closing)
+        between = abs(gap - width) < self.GRASP_GAP_TOLERANCE and abs(offset @ axis) < self.GRASP_CENTER_TOLERANCE
+        return {"finger_gap": float(gap), "object_width": float(width), "grasp_center_offset": float(offset @ axis),
+                "between_fingers": bool(between), "grasped_geometric": bool(between and within_pads)}
