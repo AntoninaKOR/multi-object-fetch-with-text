@@ -183,25 +183,51 @@ class MultiObjectFetchEnv(fetch_env.FetchEnv, gym_utils.EzPickle, ColorsMixin, A
             # original image is upside-down, so flip it
             return self.sim.render(size[0], size[1], camera_name=self.viewpoint)[::-1, :, :].copy()
 
+    SUCCESS_THRESHOLD = 0.05
+
     @abstractmethod
-    def success(self) -> bool:
+    def goal_distance(self) -> float:
+        """Distance that defines success: gripper to target (Reach) or object0 to target (Push, Pick)."""
         pass
+
+    def success(self) -> bool:
+        return self.goal_distance() < self.SUCCESS_THRESHOLD
+
+    def episode_info(self) -> Dict[str, Any]:
+        """Values that are constant within an episode (see docs/metrics.md)."""
+        return {"num_distractors": self.num_distractors, "target_color": self.target_color}
+
+    def step_info(self) -> Dict[str, Any]:
+        """Per-step physical quantities used by the evaluation metrics (see docs/metrics.md)."""
+        return {"dist": float(self.goal_distance())}
+
+    def reset(self):
+        obs = super().reset()
+        # Move the target0 site to the new goal; otherwise only render() does it, and success() reads the site.
+        self._render_callback()
+        return obs
 
     def step(self, action):
         try:
             obs, reward, done, info = super().step(action)
         except MujocoException:
             # Random / large actions can blow up contacts; end the episode cleanly.
+            # Per-step quantities are omitted: after the reset they no longer describe the episode.
             self.sim.set_state(self.initial_state)
             self.sim.forward()
             obs = self._get_obs()
-            info = {"success": False, "unstable": True}
+            info = {"success": False, "unstable": True, **self.episode_info()}
             return obs, 0.0, True, info
         info["success"] = self.success()
+        info["unstable"] = False
+        info.update(self.episode_info())
+        info.update(self.step_info())
         return obs, reward, done, info
 
     def _reset_sim(self):
         self.sim.set_state(self.initial_state)
+        # Index into COLOR_NAMES of the instructed color; -1 for tasks without a named color.
+        self.target_color = -1
 
         if self.randomize_table_color:
             table_color = np.random.uniform(0, 1, size=3)
@@ -309,6 +335,7 @@ class ReachEnv(MultiObjectFetchEnv):
                 len(self.colors), size=num_colors, replace=False
             )
             target_idx = int(color_indices[0])
+            self.target_color = target_idx
             self.sim.model.site_rgba[self.sim.model.site_name2id('target0')][:3] = self.colors[target_idx]
             self.instruction = build_instruction(
                 self.environment, self.task, color_name=self.color_names[target_idx]
@@ -349,6 +376,8 @@ class ReachEnv(MultiObjectFetchEnv):
         did_reset_sim = False
         while not did_reset_sim:
             did_reset_sim = self._reset_sim()
+        # Move the target0 site to the new goal; otherwise only render() does it, and success() reads the site.
+        self._render_callback()
         obs = self._get_obs()
         return obs
 
@@ -360,10 +389,9 @@ class ReachEnv(MultiObjectFetchEnv):
             goal_dist = np.linalg.norm(grip_pos.copy() - self.sim.data.get_site_xpos(f'target0').copy())
             return np.exp(-20 * goal_dist)
 
-    def success(self):
+    def goal_distance(self):
         grip_pos = self.sim.data.get_site_xpos('robot0:grip')
-        d = np.linalg.norm(grip_pos.copy() - self.sim.data.get_site_xpos(f'target0').copy())
-        return d < 0.05
+        return np.linalg.norm(grip_pos.copy() - self.sim.data.get_site_xpos(f'target0').copy())
 
 
 class ManipulateEnv(MultiObjectFetchEnv):
@@ -452,6 +480,7 @@ class ManipulateEnv(MultiObjectFetchEnv):
                 len(self.colors), size=self.num_blocks, replace=False
             )
             target_idx = int(color_indices[0])
+            self.target_color = target_idx
             self.sim.model.geom_rgba[self.sim.model.geom_name2id(self.object_names[0])][:3] = (
                 self.colors[target_idx]
             )
@@ -520,6 +549,19 @@ class ManipulateEnv(MultiObjectFetchEnv):
             goal_dist = np.linalg.norm(np.squeeze(self.sim.data.get_site_xpos('object0')).copy() - np.squeeze(self.sim.data.get_site_xpos('target0')).copy())
             return 0.9 * np.exp(-20 * goal_dist) + 0.1 * np.exp(-10 * grip_dist)
 
-    def success(self):
-        d = np.linalg.norm(np.squeeze(self.sim.data.get_site_xpos(f'target0').copy()) - np.squeeze(self.sim.data.get_site_xpos('object0'))).copy()
-        return d < 0.05
+    def goal_distance(self):
+        return np.linalg.norm(np.squeeze(self.sim.data.get_site_xpos(f'target0').copy()) - np.squeeze(self.sim.data.get_site_xpos('object0'))).copy()
+
+    def episode_info(self):
+        info = super().episode_info()
+        # Height of the goal above a block resting on the table (resting blocks sit within 1 mm of height_offset).
+        info["goal_height"] = float(self.goal[2] - self.height_offset)
+        return info
+
+    def step_info(self):
+        info = super().step_info()
+        object_pos = np.squeeze(self.sim.data.get_site_xpos('object0')).copy()
+        grip_pos = np.squeeze(self.sim.data.get_site_xpos('robot0:grip')).copy()
+        info["object_lift"] = float(object_pos[2] - self.height_offset)
+        info["grip_object_dist"] = float(np.linalg.norm(grip_pos - object_pos))
+        return info
