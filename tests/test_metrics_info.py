@@ -1,4 +1,6 @@
 """Tests for the per-step metric values that MultiObjectFetchEnv writes into `info` (see docs/metrics.md)."""
+from itertools import combinations
+
 import gym
 import numpy as np
 import pytest
@@ -16,7 +18,7 @@ from mujoco_py.builder import MujocoException  # noqa: E402
 
 import multi_object_fetch.env  # noqa: E402  # also registers the gym envs
 from multi_object_fetch.language import LanguageWrapper
-from multi_object_fetch.language.instructions import COLOR_NAMES
+from multi_object_fetch.language.instructions import COLOR_NAMES, INSTRUCTIONS, SHAPE_NAMES
 
 
 def make(name, seed=0):
@@ -301,3 +303,79 @@ def test_unstable_step(name, monkeypatch):
     assert info['num_distractors'] == 2
     assert 0 <= info['target_color'] < len(COLOR_NAMES)
     assert ('goal_height' in info) == name.startswith('Pick')
+
+
+SHAPE = 'ReachMulticolorShape_{}Distractors_Dense-v1'
+
+
+def site_objects(env):
+    """(color index, shape index, position, bounding radius) of target0, then each distractor."""
+    objects = []
+    for name in ['target0'] + [f'distractor{i}' for i in range(env.num_distractors)]:
+        site_id = env.sim.model.site_name2id(name)
+        color = int(np.argmin(np.abs(env.colors - env.sim.model.site_rgba[site_id][:3]).sum(1)))
+        shape = env.shape_geoms.index(int(env.sim.model.site_type[site_id]))
+        objects.append((color, shape, site(env, name), env.site_radius(name)))
+    return objects
+
+
+@pytest.mark.parametrize('num_distractors', [0, 1, 2, 4])
+def test_shape_scene(num_distractors):
+    env = make(SHAPE.format(num_distractors))
+    target_shapes = set()
+    for _ in range(30):
+        env.reset()
+        objects = site_objects(env)
+        color, shape = objects[0][:2]
+        assert (color, shape) == (env.target_color, env.target_shape)
+        assert env.instruction == f"reach the {COLOR_NAMES[color]} {SHAPE_NAMES[shape]}"
+        pairs = [o[:2] for o in objects]
+        assert len(set(pairs)) == len(pairs)  # the instruction names exactly one object
+        if num_distractors:
+            assert (color, 1 - shape) in pairs  # a same-color object of the other shape
+        for (*_, pos_a, r_a), (*_, pos_b, r_b) in combinations(objects, 2):
+            assert np.linalg.norm(pos_a - pos_b) >= r_a + r_b - 1e-6  # bounding spheres do not overlap
+        target_shapes.add(shape)
+    assert target_shapes == {0, 1}
+
+
+def test_shape_info_and_language():
+    env = LanguageWrapper(make(SHAPE.format(2)))
+    env.action_space.seed(0)
+    for _ in range(3):
+        env.reset()
+        _, _, _, first = env.step(env.action_space.sample())
+        for _ in range(5):
+            _, _, _, info = env.step(env.action_space.sample())
+            check_step(info)
+            assert (info['target_color'], info['target_shape']) == (first['target_color'], first['target_shape'])
+        assert info['instruction'] == env.unwrapped.instruction
+        assert info['instruction'].endswith(f"{COLOR_NAMES[info['target_color']]} {SHAPE_NAMES[info['target_shape']]}")
+
+
+def test_shape_scripted_success():
+    env = make(SHAPE.format(4))
+    assert env.spec.max_episode_steps == 100
+    for _ in range(3):
+        env.reset()
+        for _ in range(episode_length('Reach')):
+            _, _, _, info = env.step(move_towards(env, site(env, 'target0'), 0.0))
+            check_step(info)
+        assert info['success']
+
+
+@pytest.mark.parametrize('name', ['ReachMulticolor_2Distractors_Dense-v1', 'ReachRed_4Distractors_Dense-v1',
+                                  'PickMulticolor_2Distractors_Dense-v1'])
+def test_other_tasks_have_no_shape(name):
+    env = make(name)
+    env.reset()
+    _, _, _, info = env.step(env.action_space.sample())
+    assert info['target_shape'] == -1
+    if name.startswith('Reach'):
+        assert all(o[1] == 0 for o in site_objects(env))  # spheres only
+
+
+def test_every_instruction_is_embedded():
+    env = LanguageWrapper(make(SHAPE.format(1)))
+    for instruction in INSTRUCTIONS.values():
+        assert len(env._tokenize(instruction)) == len(env._embed(instruction)) == len(env._pieces(instruction))

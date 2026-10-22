@@ -52,3 +52,35 @@ pick up the spring green object
 pick up the thistle object
 pick up the magenta object
 pick up the dodger blue object
+reach the green sphere
+reach the green cube
+reach the dark slate gray sphere
+reach the dark slate gray cube
+reach the saddle brown sphere
+reach the saddle brown cube
+reach the midnight blue sphere
+reach the midnight blue cube
+reach the dark green sphere
+reach the dark green cube
+reach the dark khaki sphere
+reach the dark khaki cube
+reach the turquoise sphere
+reach the turquoise cube
+reach the red sphere
+reach the red cube
+reach the orange sphere
+reach the orange cube
+reach the yellow sphere
+reach the yellow cube
+reach the violet red sphere
+reach the violet red cube
+reach the blue sphere
+reach the blue cube
+reach the spring green sphere
+reach the spring green cube
+reach the thistle sphere
+reach the thistle cube
+reach the magenta sphere
+reach the magenta cube
+reach the dodger blue sphere
+reach the dodger blue cube

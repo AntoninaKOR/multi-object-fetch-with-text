@@ -17,7 +17,7 @@ import tempfile
 from pathlib import Path
 from importlib.resources import files
 from mujoco_py.builder import MujocoException
-from multi_object_fetch.language.instructions import COLOR_NAMES, build_instruction
+from multi_object_fetch.language.instructions import COLOR_NAMES, SHAPE_NAMES, build_instruction
 
 
 def prepare_fetch_assets() -> Path:
@@ -53,6 +53,15 @@ class ColorsMixin(ABC):
     def color_names(self) -> Tuple[str, ...]:
         """English names aligned with ``colors`` indices (see COLOR_NAMES)."""
         return COLOR_NAMES
+
+    @property
+    def shape_names(self) -> Tuple[str, ...]:
+        """English names aligned with ``shape_geoms`` indices (see SHAPE_NAMES)."""
+        return SHAPE_NAMES
+
+    @property
+    def shape_geoms(self) -> Tuple[int, ...]:
+        return (const.GEOM_SPHERE, const.GEOM_BOX)
 
     @staticmethod
     def delta_e_cie2000(lab1, lab2, kL=1, kC=1, kH=1):
@@ -137,7 +146,8 @@ class MultiObjectFetchEnv(fetch_env.FetchEnv, gym_utils.EzPickle, ColorsMixin, A
             robot_configuration (str): The variant of the robot to use.
             viewpoint (str): The camera viewpoint to use for rendering.
             environment (str): High-level motor skill: Reach, Push, or Pick.
-            task (str): Relational color task: Red, Reddest, Odd, OddGroups, or Multicolor.
+            task (str): Relational color task: Red, Reddest, Odd, OddGroups, Multicolor, or
+                MulticolorShape (Reach only).
         """
         self.obs_type = obs_type
         self.object_size = object_size
@@ -151,7 +161,7 @@ class MultiObjectFetchEnv(fetch_env.FetchEnv, gym_utils.EzPickle, ColorsMixin, A
         # Multicolor instruction depends on the episode's target color (set in _reset_sim).
         self.instruction = (
             ""
-            if task == "Multicolor"
+            if task in ("Multicolor", "MulticolorShape")
             else build_instruction(environment, task)
         )
 
@@ -195,7 +205,8 @@ class MultiObjectFetchEnv(fetch_env.FetchEnv, gym_utils.EzPickle, ColorsMixin, A
 
     def episode_info(self) -> Dict[str, Any]:
         """Values that are constant within an episode (see docs/metrics.md)."""
-        return {"num_distractors": self.num_distractors, "target_color": self.target_color}
+        return {"num_distractors": self.num_distractors, "target_color": self.target_color,
+                "target_shape": self.target_shape}
 
     def step_info(self) -> Dict[str, Any]:
         """Per-step physical quantities used by the evaluation metrics (see docs/metrics.md)."""
@@ -228,6 +239,8 @@ class MultiObjectFetchEnv(fetch_env.FetchEnv, gym_utils.EzPickle, ColorsMixin, A
         self.sim.set_state(self.initial_state)
         # Index into COLOR_NAMES of the instructed color; -1 for tasks without a named color.
         self.target_color = -1
+        # Index into SHAPE_NAMES of the instructed shape; -1 for tasks without a named shape.
+        self.target_shape = -1
 
         if self.randomize_table_color:
             table_color = np.random.uniform(0, 1, size=3)
@@ -269,6 +282,12 @@ class ReachEnv(MultiObjectFetchEnv):
         os.remove(MODEL_XML_PATH)
 
 
+
+    def site_radius(self, name):
+        """Bounding-sphere radius of a target/distractor site: a cube's corners reach sqrt(3) half-sizes out."""
+        site_id = self.sim.model.site_name2id(name)
+        size = self.sim.model.site_size[site_id][0]
+        return size * np.sqrt(3) if self.sim.model.site_type[site_id] == const.GEOM_BOX else size
 
     def sample_pos(self, object_size):
         pos = self.initial_gripper_xpos[:3] + self.np_random.uniform(-0.15, 0.15, size=3)
@@ -346,24 +365,51 @@ class ReachEnv(MultiObjectFetchEnv):
                     self.colors[distractor_idx]
                 )
 
+        elif self.task == 'MulticolorShape':
+            assert len(self.color_names) == len(self.colors) and len(self.shape_names) == len(self.shape_geoms)
+            color = int(self.np_random.choice(len(self.colors)))
+            shape = int(self.np_random.choice(len(self.shape_names)))
+            objects = [(color, shape)]
+            if self.num_distractors > 0:
+                # A distractor with the target's color and the other shape, so color alone is not enough.
+                objects.append((color, 1 - shape))
+            # The rest get unused (color, shape) pairs, so the instruction always names exactly one object.
+            unused = [(c, s) for c in range(len(self.colors)) for s in range(len(self.shape_names))
+                      if (c, s) not in objects]
+            for k in self.np_random.choice(len(unused), size=1 + self.num_distractors - len(objects), replace=False):
+                objects.append(unused[int(k)])
+
+            self.target_color, self.target_shape = color, shape
+            self.instruction = build_instruction(
+                self.environment, self.task, color_name=self.color_names[color], shape_name=self.shape_names[shape]
+            )
+            site_names = ['target0'] + [f'distractor{i}' for i in range(self.num_distractors)]
+            for name, (c, s) in zip(site_names, objects):
+                site_id = self.sim.model.site_name2id(name)
+                self.sim.model.site_rgba[site_id][:3] = self.colors[c]
+                self.sim.model.site_type[site_id] = self.shape_geoms[s]
+
         else:
             raise ValueError("Invalid task: {}".format(self.task))
 
         # Randomize start position of distractors.
         sites_offset = (self.sim.data.site_xpos - self.sim.model.site_pos).copy()
         ball_positions = [self.goal]
+        radii = [self.site_radius('target0')]
         for i in range(self.num_distractors):
+            radius = self.site_radius(f'distractor{i}')
             pos_not_valid = True
             while pos_not_valid:
                 distractor_xpos = self.sample_pos(self.target_size)
 
                 pos_not_valid = False
-                for position in ball_positions:
-                    pos_not_valid = np.linalg.norm(distractor_xpos - position) < 2 * self.target_size
+                for position, other_radius in zip(ball_positions, radii):
+                    pos_not_valid = np.linalg.norm(distractor_xpos - position) < radius + other_radius
                     if pos_not_valid:
                         break
 
             ball_positions.append(distractor_xpos)
+            radii.append(radius)
 
             site_id = self.sim.model.site_name2id(f'distractor{i}')
             self.sim.model.site_pos[site_id] = distractor_xpos - sites_offset[0]

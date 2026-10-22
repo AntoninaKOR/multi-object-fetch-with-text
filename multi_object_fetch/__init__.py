@@ -2,12 +2,14 @@ from gym.envs.registration import register
 
 
 for environment in ['Reach', 'Push', 'Pick']:
-    for task in ['Red', 'Reddest', 'Odd', 'OddGroups', 'Multicolor']:
+    for task in ['Red', 'Reddest', 'Odd', 'OddGroups', 'Multicolor', 'MulticolorShape']:
         for num_distractors in range(0, 5):
             for reward_type in ['Sparse', 'Dense']:
                 if task.startswith('Odd') and num_distractors < 2:  # Odd-one-out needs at least two others.
                     continue
                 if task == 'OddGroups' and num_distractors < 4:  # Odd with groups needs at least 2 x 2 others.
+                    continue
+                if task == 'MulticolorShape' and environment != 'Reach':  # Shapes are Reach sites only.
                     continue
 
                 initial_qpos = {
@@ -33,7 +35,7 @@ for environment in ['Reach', 'Push', 'Pick']:
                         kwargs['block_gripper'] = True
 
                 max_episode_steps = 50 if environment == 'Reach' else 100
-                if task == 'Multicolor':
+                if task in ('Multicolor', 'MulticolorShape'):
                     max_episode_steps *= 2
 
                 register(

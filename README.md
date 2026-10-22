@@ -29,10 +29,17 @@ Multicolor: each episode picks a random target color; the streamed instruction n
 python examples/run.py --policy random --task Multicolor --num_distractors 2 --environment Pick
 ```
 
+MulticolorShape (Reach only): targets and distractors are spheres or cubes, and the instruction names color and shape
+(e.g. `reach the red cube`). With at least one distractor, one of them always has the target's color and the other
+shape, so color alone is not enough; every (color, shape) pair appears at most once.
+```
+python examples/run.py --policy random --task MulticolorShape --num_distractors 2 --environment Reach
+```
+
 The following arguments are used to configure the environments and can be tested in `examples/run.py`:
 - `policy`: Whether to control the agent via the keyboard or run a random policy be in `random`, `user`.
 - `environment`: Selects the environment to run and can be in `Reach`, `Push`, and `Pick`.
-- `task`: Selects which task to run and can be in `Red`, `Reddest`, `Odd`, `OddGroups`, and `Multicolor`.
+- `task`: Selects which task to run and can be in `Red`, `Reddest`, `Odd`, `OddGroups`, `Multicolor`, and `MulticolorShape` (Reach only).
 - `num_distractors`: Number of distractor targets/blocks to use in the environment.
 - `no_language`: Disable HomeGrid-style parallel token streaming.
 - `no_viz`: Disable the on-frame instruction overlay.
