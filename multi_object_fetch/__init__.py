@@ -66,5 +66,5 @@ for task in ['Onto1', 'Onto1Fixed']:
                     'task': task,
                     'environment': 'Stack',
                 },
-                max_episode_steps=200,
+                max_episode_steps=100,
             )
