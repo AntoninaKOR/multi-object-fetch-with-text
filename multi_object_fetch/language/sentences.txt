@@ -52,3 +52,243 @@ pick up the spring green object
 pick up the thistle object
 pick up the magenta object
 pick up the dodger blue object
+put the blue block on the dark green block
+put the blue block on the dark khaki block
+put the blue block on the dark slate gray block
+put the blue block on the dodger blue block
+put the blue block on the green block
+put the blue block on the magenta block
+put the blue block on the midnight blue block
+put the blue block on the orange block
+put the blue block on the red block
+put the blue block on the saddle brown block
+put the blue block on the spring green block
+put the blue block on the thistle block
+put the blue block on the turquoise block
+put the blue block on the violet red block
+put the blue block on the yellow block
+put the dark green block on the blue block
+put the dark green block on the dark khaki block
+put the dark green block on the dark slate gray block
+put the dark green block on the dodger blue block
+put the dark green block on the green block
+put the dark green block on the magenta block
+put the dark green block on the midnight blue block
+put the dark green block on the orange block
+put the dark green block on the red block
+put the dark green block on the saddle brown block
+put the dark green block on the spring green block
+put the dark green block on the thistle block
+put the dark green block on the turquoise block
+put the dark green block on the violet red block
+put the dark green block on the yellow block
+put the dark khaki block on the blue block
+put the dark khaki block on the dark green block
+put the dark khaki block on the dark slate gray block
+put the dark khaki block on the dodger blue block
+put the dark khaki block on the green block
+put the dark khaki block on the magenta block
+put the dark khaki block on the midnight blue block
+put the dark khaki block on the orange block
+put the dark khaki block on the red block
+put the dark khaki block on the saddle brown block
+put the dark khaki block on the spring green block
+put the dark khaki block on the thistle block
+put the dark khaki block on the turquoise block
+put the dark khaki block on the violet red block
+put the dark khaki block on the yellow block
+put the dark slate gray block on the blue block
+put the dark slate gray block on the dark green block
+put the dark slate gray block on the dark khaki block
+put the dark slate gray block on the dodger blue block
+put the dark slate gray block on the green block
+put the dark slate gray block on the magenta block
+put the dark slate gray block on the midnight blue block
+put the dark slate gray block on the orange block
+put the dark slate gray block on the red block
+put the dark slate gray block on the saddle brown block
+put the dark slate gray block on the spring green block
+put the dark slate gray block on the thistle block
+put the dark slate gray block on the turquoise block
+put the dark slate gray block on the violet red block
+put the dark slate gray block on the yellow block
+put the dodger blue block on the blue block
+put the dodger blue block on the dark green block
+put the dodger blue block on the dark khaki block
+put the dodger blue block on the dark slate gray block
+put the dodger blue block on the green block
+put the dodger blue block on the magenta block
+put the dodger blue block on the midnight blue block
+put the dodger blue block on the orange block
+put the dodger blue block on the red block
+put the dodger blue block on the saddle brown block
+put the dodger blue block on the spring green block
+put the dodger blue block on the thistle block
+put the dodger blue block on the turquoise block
+put the dodger blue block on the violet red block
+put the dodger blue block on the yellow block
+put the green block on the blue block
+put the green block on the dark green block
+put the green block on the dark khaki block
+put the green block on the dark slate gray block
+put the green block on the dodger blue block
+put the green block on the magenta block
+put the green block on the midnight blue block
+put the green block on the orange block
+put the green block on the red block
+put the green block on the saddle brown block
+put the green block on the spring green block
+put the green block on the thistle block
+put the green block on the turquoise block
+put the green block on the violet red block
+put the green block on the yellow block
+put the magenta block on the blue block
+put the magenta block on the dark green block
+put the magenta block on the dark khaki block
+put the magenta block on the dark slate gray block
+put the magenta block on the dodger blue block
+put the magenta block on the green block
+put the magenta block on the midnight blue block
+put the magenta block on the orange block
+put the magenta block on the red block
+put the magenta block on the saddle brown block
+put the magenta block on the spring green block
+put the magenta block on the thistle block
+put the magenta block on the turquoise block
+put the magenta block on the violet red block
+put the magenta block on the yellow block
+put the midnight blue block on the blue block
+put the midnight blue block on the dark green block
+put the midnight blue block on the dark khaki block
+put the midnight blue block on the dark slate gray block
+put the midnight blue block on the dodger blue block
+put the midnight blue block on the green block
+put the midnight blue block on the magenta block
+put the midnight blue block on the orange block
+put the midnight blue block on the red block
+put the midnight blue block on the saddle brown block
+put the midnight blue block on the spring green block
+put the midnight blue block on the thistle block
+put the midnight blue block on the turquoise block
+put the midnight blue block on the violet red block
+put the midnight blue block on the yellow block
+put the orange block on the blue block
+put the orange block on the dark green block
+put the orange block on the dark khaki block
+put the orange block on the dark slate gray block
+put the orange block on the dodger blue block
+put the orange block on the green block
+put the orange block on the magenta block
+put the orange block on the midnight blue block
+put the orange block on the red block
+put the orange block on the saddle brown block
+put the orange block on the spring green block
+put the orange block on the thistle block
+put the orange block on the turquoise block
+put the orange block on the violet red block
+put the orange block on the yellow block
+put the red block on the blue block
+put the red block on the dark green block
+put the red block on the dark khaki block
+put the red block on the dark slate gray block
+put the red block on the dodger blue block
+put the red block on the green block
+put the red block on the magenta block
+put the red block on the midnight blue block
+put the red block on the orange block
+put the red block on the saddle brown block
+put the red block on the spring green block
+put the red block on the thistle block
+put the red block on the turquoise block
+put the red block on the violet red block
+put the red block on the yellow block
+put the saddle brown block on the blue block
+put the saddle brown block on the dark green block
+put the saddle brown block on the dark khaki block
+put the saddle brown block on the dark slate gray block
+put the saddle brown block on the dodger blue block
+put the saddle brown block on the green block
+put the saddle brown block on the magenta block
+put the saddle brown block on the midnight blue block
+put the saddle brown block on the orange block
+put the saddle brown block on the red block
+put the saddle brown block on the spring green block
+put the saddle brown block on the thistle block
+put the saddle brown block on the turquoise block
+put the saddle brown block on the violet red block
+put the saddle brown block on the yellow block
+put the spring green block on the blue block
+put the spring green block on the dark green block
+put the spring green block on the dark khaki block
+put the spring green block on the dark slate gray block
+put the spring green block on the dodger blue block
+put the spring green block on the green block
+put the spring green block on the magenta block
+put the spring green block on the midnight blue block
+put the spring green block on the orange block
+put the spring green block on the red block
+put the spring green block on the saddle brown block
+put the spring green block on the thistle block
+put the spring green block on the turquoise block
+put the spring green block on the violet red block
+put the spring green block on the yellow block
+put the thistle block on the blue block
+put the thistle block on the dark green block
+put the thistle block on the dark khaki block
+put the thistle block on the dark slate gray block
+put the thistle block on the dodger blue block
+put the thistle block on the green block
+put the thistle block on the magenta block
+put the thistle block on the midnight blue block
+put the thistle block on the orange block
+put the thistle block on the red block
+put the thistle block on the saddle brown block
+put the thistle block on the spring green block
+put the thistle block on the turquoise block
+put the thistle block on the violet red block
+put the thistle block on the yellow block
+put the turquoise block on the blue block
+put the turquoise block on the dark green block
+put the turquoise block on the dark khaki block
+put the turquoise block on the dark slate gray block
+put the turquoise block on the dodger blue block
+put the turquoise block on the green block
+put the turquoise block on the magenta block
+put the turquoise block on the midnight blue block
+put the turquoise block on the orange block
+put the turquoise block on the red block
+put the turquoise block on the saddle brown block
+put the turquoise block on the spring green block
+put the turquoise block on the thistle block
+put the turquoise block on the violet red block
+put the turquoise block on the yellow block
+put the violet red block on the blue block
+put the violet red block on the dark green block
+put the violet red block on the dark khaki block
+put the violet red block on the dark slate gray block
+put the violet red block on the dodger blue block
+put the violet red block on the green block
+put the violet red block on the magenta block
+put the violet red block on the midnight blue block
+put the violet red block on the orange block
+put the violet red block on the red block
+put the violet red block on the saddle brown block
+put the violet red block on the spring green block
+put the violet red block on the thistle block
+put the violet red block on the turquoise block
+put the violet red block on the yellow block
+put the yellow block on the blue block
+put the yellow block on the dark green block
+put the yellow block on the dark khaki block
+put the yellow block on the dark slate gray block
+put the yellow block on the dodger blue block
+put the yellow block on the green block
+put the yellow block on the magenta block
+put the yellow block on the midnight blue block
+put the yellow block on the orange block
+put the yellow block on the red block
+put the yellow block on the saddle brown block
+put the yellow block on the spring green block
+put the yellow block on the thistle block
+put the yellow block on the turquoise block
+put the yellow block on the violet red block

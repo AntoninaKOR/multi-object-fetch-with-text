@@ -29,10 +29,15 @@ Multicolor: each episode picks a random target color; the streamed instruction n
 python examples/run.py --policy random --task Multicolor --num_distractors 2 --environment Pick
 ```
 
+Stack: put one block on another (e.g. `put the red block on the blue block`); both colors are random each episode and the distractors are extra loose blocks. There is no target location: the goal is the top of the base block, wherever it is. In `Onto1Fixed` the base is welded to the table; in `Onto1` it is a free block that can be pushed or knocked over (the episode goes on). Success: the block rests on the base, centered over its top face, released and still; holding it there does not count. Dense reward is 1 on success and otherwise `0.8 * exp(-20 * d) + 0.1 * exp(-10 * g)` (d: block to the top of the base, g: gripper to block); sparse reward is -1 until success. The episode ends early, failed, if the block or the base falls off the table. Episodes have 200 steps.
+```
+python examples/run.py --policy user --task Onto1Fixed --num_distractors 2 --environment Stack
+```
+
 The following arguments are used to configure the environments and can be tested in `examples/run.py`:
 - `policy`: Whether to control the agent via the keyboard or run a random policy be in `random`, `user`.
-- `environment`: Selects the environment to run and can be in `Reach`, `Push`, and `Pick`.
-- `task`: Selects which task to run and can be in `Red`, `Reddest`, `Odd`, `OddGroups`, and `Multicolor`.
+- `environment`: Selects the environment to run and can be in `Reach`, `Push`, `Pick`, and `Stack`.
+- `task`: Selects which task to run and can be in `Red`, `Reddest`, `Odd`, `OddGroups`, and `Multicolor` (Reach, Push, Pick), or `Onto1` and `Onto1Fixed` (Stack).
 - `num_distractors`: Number of distractor targets/blocks to use in the environment.
 - `no_language`: Disable HomeGrid-style parallel token streaming.
 - `no_viz`: Disable the on-frame instruction overlay.

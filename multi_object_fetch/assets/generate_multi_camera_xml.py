@@ -49,7 +49,9 @@ base = '''
 </mujoco>
 '''
 
-def generate_multi_camera_xml(num_blocks: int, robot: str, task='vbb', target_size=0.02, object_size=0.025, num_targets=0):
+def generate_multi_camera_xml(num_blocks: int, robot: str, task='vbb', target_size=0.02, object_size=0.025, num_targets=0,
+                              fixed_blocks=()):
+    """fixed_blocks: ids of blocks without a free joint (welded to the world; move them via model.body_pos)."""
     if num_blocks <= (6 if not task == 'reach' else 5):
         colors = BASIC_COLORS[:max(num_blocks, num_targets)]
     else:
@@ -86,7 +88,10 @@ def generate_multi_camera_xml(num_blocks: int, robot: str, task='vbb', target_si
         else:
             if task == 'vbb':
                 sites.append(site_base.format(**dict(id=i, target_size=target_size, color=colors[i])))
-            block_bodies.append(block_base.format(**dict(id=i, object_size=object_size)))
+            block = block_base.format(**dict(id=i, object_size=object_size))
+            if i in fixed_blocks:
+                block = block.replace(f'<joint name="object{i}:joint" type="free" damping="0.01"></joint>', '')
+            block_bodies.append(block)
             assets.append(asset_base.format(**dict(id=i, color=colors[i])))
 
     if task == 'render':

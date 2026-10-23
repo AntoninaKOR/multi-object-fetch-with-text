@@ -151,7 +151,7 @@ class MultiObjectFetchEnv(fetch_env.FetchEnv, gym_utils.EzPickle, ColorsMixin, A
         # Multicolor instruction depends on the episode's target color (set in _reset_sim).
         self.instruction = (
             ""
-            if task == "Multicolor"
+            if task == "Multicolor" or environment == "Stack"
             else build_instruction(environment, task)
         )
 
@@ -402,6 +402,7 @@ class ManipulateEnv(MultiObjectFetchEnv):
     GRASP_GAP_TOLERANCE = 0.005  # Finger gap may differ this much from the object width (soft contacts).
     GRASP_CENTER_TOLERANCE = 0.01  # Object center this close to the midpoint between the fingers.
     PLACED_SPEED = 0.01  # A placed object moves slower than this (m/s).
+    NUM_TASK_OBJECTS = 1  # Blocks the task needs (object0, ...); the distractors come after them.
 
     def __init__(self, initial_qpos: Dict[str, Any], obs_type: str = "dictstate", object_size: float = 0.045,
                  target_size: float = 0.04, robot_configuration: str = "default", viewpoint: str = "frontview",
@@ -413,7 +414,7 @@ class ManipulateEnv(MultiObjectFetchEnv):
             environment=environment, task=task,
         )
         self.num_distractors = num_distractors
-        self.num_blocks = num_distractors + 1
+        self.num_blocks = num_distractors + self.NUM_TASK_OBJECTS
         self.object_names = ['object{}'.format(i) for i in range(self.num_blocks)]
         self.width = width
         self.height = height
@@ -421,7 +422,7 @@ class ManipulateEnv(MultiObjectFetchEnv):
     
         fetch_cache = prepare_fetch_assets()
         with tempfile.NamedTemporaryFile(mode='wt', dir=fetch_cache / "fetch", delete=False, suffix=".xml") as fp:
-            fp.write(generate_multi_camera_xml(self.num_blocks, self.robot, task='pick_place', target_size=target_size, object_size=object_size))
+            fp.write(self._model_xml())
             MODEL_XML_PATH = fp.name
 
         fetch_env.FetchEnv.__init__(
@@ -433,6 +434,10 @@ class ManipulateEnv(MultiObjectFetchEnv):
                                     viewpoint, num_distractors, reward_type, task, width, height, target_in_the_air,
                                     block_gripper, environment)
         os.remove(MODEL_XML_PATH)
+
+    def _model_xml(self):
+        return generate_multi_camera_xml(self.num_blocks, self.robot, task='pick_place', target_size=self.target_size,
+                                         object_size=self.object_size)
 
     def _reset_sim(self):
         super()._reset_sim()
@@ -504,7 +509,11 @@ class ManipulateEnv(MultiObjectFetchEnv):
         else:
             raise ValueError("Invalid task: {}".format(self.task))
 
-        # Randomize start position of objects.
+        self._place_objects()
+        return True
+
+    def _place_objects(self):
+        """Randomize start position of objects."""
         prev_obj_xpos = []
 
         valid_configuration = False
@@ -529,14 +538,16 @@ class ManipulateEnv(MultiObjectFetchEnv):
                         valid_configuration = True
 
                 prev_obj_xpos.append(object_xypos)
+                self._set_object_xy(obj_name, object_xypos)
 
-                object_qpos = self.sim.data.get_joint_qpos(F"{obj_name}:joint")
-                assert object_qpos.shape == (7,)
-                object_qpos[:2] = object_xypos
-                object_qpos[2] = self.height_offset
-                self.sim.data.set_joint_qpos(F"{obj_name}:joint", object_qpos)
-                self.sim.forward()
-        return True
+    def _set_object_xy(self, obj_name, xy):
+        """Put a block on the table at xy."""
+        object_qpos = self.sim.data.get_joint_qpos(F"{obj_name}:joint")
+        assert object_qpos.shape == (7,)
+        object_qpos[:2] = xy
+        object_qpos[2] = self.height_offset
+        self.sim.data.set_joint_qpos(F"{obj_name}:joint", object_qpos)
+        self.sim.forward()
 
     def _sample_goal(self):
         goal = self.sim.data.get_joint_qpos(F"{self.object_names[0]}:joint")[:3]
@@ -638,3 +649,112 @@ class ManipulateEnv(MultiObjectFetchEnv):
         between = abs(gap - width) < self.GRASP_GAP_TOLERANCE and abs(offset @ axis) < self.GRASP_CENTER_TOLERANCE
         return {"finger_gap": float(gap), "object_width": float(width), "grasp_center_offset": float(offset @ axis),
                 "between_fingers": bool(between), "grasped_geometric": bool(between and within_pads)}
+
+
+class StackEnv(ManipulateEnv):
+    """Put object0 on top of object1 (the base); object2, ... are loose distractor blocks.
+
+    Onto1Fixed: the base is welded to the table. Onto1: the base is a free block that can be pushed or
+    knocked over; that does not end the episode. There is no target location: the goal is the top of the
+    base, wherever the base is. The episode ends (failed) when object0 or object1 falls off the table.
+    """
+    NUM_TASK_OBJECTS = 2
+    ON_TOP_TOLERANCE = 0.01  # object0 sits one block height (2 * object_size) above the base, within this.
+
+    @property
+    def fixed_base(self):
+        return self.task.endswith('Fixed')
+
+    def _model_xml(self):
+        return generate_multi_camera_xml(self.num_blocks, self.robot, task='pick_place', target_size=self.target_size,
+                                         object_size=self.object_size, fixed_blocks=(1,) if self.fixed_base else ())
+
+    def _reset_sim(self):
+        MultiObjectFetchEnv._reset_sim(self)
+        if self.task not in ('Onto1', 'Onto1Fixed'):
+            raise ValueError("Invalid task: {}".format(self.task))
+
+        color_indices = self.np_random.choice(len(self.colors), size=self.num_blocks, replace=False)
+        self.target_color, self.base_color = int(color_indices[0]), int(color_indices[1])
+        for object_name, color_idx in zip(self.object_names, color_indices):
+            self.sim.model.geom_rgba[self.sim.model.geom_name2id(object_name)][:3] = self.colors[color_idx]
+        self.instruction = build_instruction(self.environment, self.task, color_name=self.color_names[self.target_color],
+                                             base_color_name=self.color_names[self.base_color])
+        # No target location to show.
+        self.sim.model.site_rgba[self.sim.model.site_name2id('target0')][3] = 0
+
+        self._place_objects()
+        self.base_start_xy = np.squeeze(self.sim.data.get_site_xpos('object1'))[:2].copy()
+        return True
+
+    def _set_object_xy(self, obj_name, xy):
+        if obj_name == 'object1' and self.fixed_base:
+            self.sim.model.body_pos[self.sim.model.body_name2id(obj_name)] = [xy[0], xy[1], self.height_offset]
+            self.sim.forward()
+        else:
+            super()._set_object_xy(obj_name, xy)
+
+    def _sample_goal(self):
+        """Where object0's center is when it sits squarely on the base."""
+        return np.squeeze(self.sim.data.get_site_xpos('object1')).copy() + [0, 0, 2 * self.object_size]
+
+    def _step_callback(self):
+        super()._step_callback()
+        self.goal = self._sample_goal()  # A free base can move.
+
+    def step(self, action):
+        obs, reward, done, info = super().step(action)
+        # A block the stack needs fell off the table: the task cannot be finished any more.
+        return obs, reward, done or info.get("dropped", False), info
+
+    def stack_info(self):
+        """on_base: object0 is centered over the base's top face, one block height above it (it may still be held).
+        base_resting: the base rests on the table (welded, or a free block on any face, not lifted).
+        placed: on_base, base_resting, object0 touches the base, is released (not grasped) and still.
+        dropped: object0 or the base fell off the table (center below the table top).
+        """
+        object_pos = np.squeeze(self.sim.data.get_site_xpos('object0')).copy()
+        base_pos = np.squeeze(self.sim.data.get_site_xpos('object1')).copy()
+        offset = object_pos - base_pos
+        contacts = self._object0_contacts()
+        grasped = len(contacts & set(self.FINGERS)) == 2 and self._grasp_geometry()["between_fingers"]
+        on_base = (np.linalg.norm(offset[:2]) < self.object_size
+                   and abs(offset[2] - 2 * self.object_size) < self.ON_TOP_TOLERANCE)
+        base_resting = abs(base_pos[2] - self.height_offset) < self.ON_TOP_TOLERANCE
+        speed = np.linalg.norm(self.sim.data.get_site_xvelp('object0'))
+        table_top = self.height_offset - self.object_size
+        return {"on_base": bool(on_base), "base_resting": bool(base_resting),
+                "placed": bool(on_base and base_resting and 'object1' in contacts and not grasped
+                               and speed < self.PLACED_SPEED),
+                "dropped": bool(min(object_pos[2], base_pos[2]) < table_top)}
+
+    def success(self):
+        return self.stack_info()["placed"]
+
+    def compute_reward(self, achieved_goal, goal, info):
+        if self.reward_type == 'Sparse':
+            return -np.array(not self.success()).astype(np.float32)
+        # Dense: 1 once placed; until then at most 0.9, so holding object0 on the base is worth less than letting go.
+        if self.success():
+            return 1.0
+        grip_dist = np.linalg.norm(np.squeeze(self.sim.data.get_site_xpos('object0')).copy() - np.squeeze(self.sim.data.get_site_xpos('robot0:grip')).copy())
+        return 0.8 * np.exp(-20 * self.goal_distance()) + 0.1 * np.exp(-10 * grip_dist)
+
+    def goal_distance(self):
+        return float(np.linalg.norm(np.squeeze(self.sim.data.get_site_xpos('object0')).copy() - self._sample_goal()))
+
+    def episode_info(self):
+        info = super().episode_info()
+        info["goal_height"] = 2 * self.object_size  # Always on top of the base, which rests on the table.
+        info["goal_needs_lift"] = True
+        info["base_color"] = self.base_color
+        info["fixed_base"] = self.fixed_base
+        return info
+
+    def step_info(self):
+        """ManipulateEnv's flags for object0, with placed meaning placed on the base (see stack_info)."""
+        info = super().step_info()
+        info.update(self.stack_info())
+        base_pos = np.squeeze(self.sim.data.get_site_xpos('object1')).copy()
+        info["base_shift"] = float(np.linalg.norm(base_pos[:2] - self.base_start_xy))
+        return info

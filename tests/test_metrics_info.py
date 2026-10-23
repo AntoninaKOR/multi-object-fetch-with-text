@@ -301,3 +301,144 @@ def test_unstable_step(name, monkeypatch):
     assert info['num_distractors'] == 2
     assert 0 <= info['target_color'] < len(COLOR_NAMES)
     assert ('goal_height' in info) == name.startswith('Pick')
+
+
+STACK_TASKS = ['Onto1', 'Onto1Fixed']
+
+
+def stack_plan(obj, goal):
+    """Grasp object0, carry it high, lower it onto the base and let go."""
+    above = goal + [0, 0, 0.08]
+    return [(obj + [0, 0, 0.1], 1.0, 15), (obj, 1.0, 15), (obj, -1.0, 8), (obj + [0, 0, 0.2], -1.0, 15),
+            (above, -1.0, 30), (goal + [0, 0, 0.005], -1.0, 20), (goal + [0, 0, 0.005], 1.0, 10),
+            (above, 1.0, 15)]
+
+
+def run_stack_plan(env, plan):
+    infos, rewards = [], []
+    for pos, gripper, steps in plan:
+        for _ in range(steps):
+            _, reward, done, info = env.step(move_towards(env, np.asarray(pos), gripper))
+            check_stack_step(env, info)
+            assert not done
+            infos.append(info)
+            rewards.append(reward)
+    return infos, rewards
+
+
+def check_stack_step(env, info):
+    assert info['success'] == info['placed']
+    assert info['placed'] == (info['on_base'] and info['base_resting'] and 'object1' in info['object_contacts']
+                              and not info['grasped'] and info['object_speed'] < env.PLACED_SPEED)
+    assert info['dist'] == pytest.approx(np.linalg.norm(site(env, 'object0') - env.goal), abs=1e-6)
+
+
+@pytest.mark.parametrize('task', STACK_TASKS)
+@pytest.mark.parametrize('num_distractors', [0, 2, 4])
+def test_stack_scene(task, num_distractors):
+    env = LanguageWrapper(make(f'Stack{task}_{num_distractors}Distractors_Dense-v1'))
+    b = env.unwrapped
+    assert b.num_blocks == num_distractors + 2
+    assert ('object1:joint' in b.sim.model.joint_names) != task.endswith('Fixed')
+    for _ in range(5):
+        env.reset()
+        assert b.sim.model.site_rgba[b.sim.model.site_name2id('target0')][3] == 0  # no target location
+        rgba = [tuple(b.sim.model.geom_rgba[b.sim.model.geom_name2id(n)][:3]) for n in b.object_names]
+        assert len(set(rgba)) == b.num_blocks
+        assert np.allclose(rgba[0], b.colors[b.target_color]) and np.allclose(rgba[1], b.colors[b.base_color])
+        assert b.instruction == f'put the {COLOR_NAMES[b.target_color]} block on the {COLOR_NAMES[b.base_color]} block'
+        assert np.allclose(b.goal, site(b, 'object1') + [0, 0, 2 * b.object_size])
+        positions = [site(b, n) for n in b.object_names]
+        for i in range(b.num_blocks):
+            assert positions[i][2] == pytest.approx(b.height_offset, abs=0.001)
+            for j in range(i):
+                assert np.linalg.norm(positions[i][:2] - positions[j][:2]) >= 2 * np.sqrt(2) * b.object_size - 1e-9
+        _, reward, done, info = env.step(np.zeros(4))
+        check_stack_step(b, info)
+        assert 0 <= reward < 0.9 and not done
+        assert not info['success'] and not info['on_base'] and info['base_resting'] and not info['dropped']
+        assert info['instruction'] == b.instruction
+        assert (info['target_color'], info['base_color']) == (b.target_color, b.base_color)
+        assert info['fixed_base'] == task.endswith('Fixed') and info['goal_needs_lift']
+
+
+@pytest.mark.parametrize('task', STACK_TASKS)
+def test_stack_scripted_success(task):
+    env = make(f'Stack{task}_2Distractors_Dense-v1', seed=1)
+    for _ in range(3):
+        env.reset()
+        infos, rewards = run_stack_plan(env, stack_plan(site(env, 'object0'), env.goal.copy()))
+        assert any(i['held'] for i in infos)
+        holding = [k for k, i in enumerate(infos) if i['on_base'] and i['grasped']]
+        assert holding and not any(infos[k]['success'] for k in holding)  # not placed while still held
+        assert max(rewards[k] for k in holding) < 0.9
+        assert infos[-1]['success'] and infos[-1]['placed'] and not infos[-1]['grasped']
+        assert rewards[-1] == 1.0
+        assert infos[-1]['base_shift'] < 0.01
+
+
+def test_stack_sparse_reward():
+    env = make('StackOnto1Fixed_0Distractors_Sparse-v1', seed=1)
+    env.reset()
+    _, rewards = run_stack_plan(env, stack_plan(site(env, 'object0'), env.goal.copy()))
+    assert rewards[0] == -1.0 and rewards[-1] == 0.0
+
+
+@pytest.mark.parametrize('task', STACK_TASKS)
+def test_stack_push_base(task):
+    """The gripper pushes into the base from the side: a welded base stays, a free one slides (the goal follows)."""
+    env = make(f'Stack{task}_0Distractors_Dense-v1')
+    env.reset()
+    env._set_object_xy('object1', [1.3, 0.65])
+    env._set_object_xy('object0', [1.3, 0.95])  # out of the way
+    env.base_start_xy = np.array([1.3, 0.65])
+    side = site(env, 'object1') + [0, -0.12, 0]
+    infos, _ = run_stack_plan(env, [(side + [0, 0, 0.1], -1.0, 15), (side, -1.0, 15), (side + [0, 0.17, 0], -1.0, 20)])
+    shift = infos[-1]['base_shift']
+    if task.endswith('Fixed'):
+        assert shift == 0.0
+    else:
+        assert shift > 0.03
+        assert np.allclose(env.goal, site(env, 'object1') + [0, 0, 2 * env.object_size])
+
+
+def test_stack_free_base_knocked_over_continues():
+    """Tipping the free base (on another face) is not a drop; a block lying on the knocked base is not placed."""
+    env = make('StackOnto1_0Distractors_Dense-v1')
+    env.reset()
+    set_object(env, 'object1', site(env, 'object1') + [0, 0, 0.05])
+    qpos = env.sim.data.get_joint_qpos('object1:joint').copy()
+    qpos[3:] = [np.cos(np.pi / 6), np.sin(np.pi / 6), 0, 0]  # 60 degrees about x: falls onto a side face
+    env.sim.data.set_joint_qpos('object1:joint', qpos)
+    env.sim.forward()
+    for _ in range(25):
+        _, _, done, info = env.step(np.zeros(4))
+        assert not done and not info['dropped']
+    assert abs(env.sim.data.get_site_xmat('object1')[2, 2]) < 0.05  # its old top now faces sideways
+    assert info['base_resting'] and not info['success']
+    assert np.allclose(env.goal, site(env, 'object1') + [0, 0, 2 * env.object_size])
+
+
+@pytest.mark.parametrize('name', ['object0', 'object1'])
+def test_stack_dropped_block_ends_episode(name):
+    env = make('StackOnto1_1Distractors_Dense-v1')
+    env.reset()
+    set_object(env, name, [1.3, 0.25, env.height_offset - 0.2])  # beside the table, below its top
+    _, _, done, info = env.step(np.zeros(4))
+    assert done and info['dropped'] and not info['success']
+
+
+def test_stack_distractor_off_table_does_not_end_episode():
+    env = make('StackOnto1_1Distractors_Dense-v1')
+    env.reset()
+    set_object(env, 'object2', [1.3, 0.25, env.height_offset - 0.2])
+    _, _, done, info = env.step(np.zeros(4))
+    assert not done and not info['dropped']
+
+
+def test_stack_instructions_are_embedded():
+    from multi_object_fetch.language.instructions import INSTRUCTIONS
+    env = LanguageWrapper(make('StackOnto1_0Distractors_Dense-v1'))
+    for key, sentence in INSTRUCTIONS.items():
+        if key[0] == 'Stack':
+            assert sentence in env.token_cache and sentence in env.embed_cache, sentence

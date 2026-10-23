@@ -42,3 +42,29 @@ for environment in ['Reach', 'Push', 'Pick']:
                     kwargs=kwargs,
                     max_episode_steps=max_episode_steps,
                 )
+
+# Stack: put object0 on object1 (Onto1Fixed: object1 is welded to the table). Distractors are extra loose blocks.
+for task in ['Onto1', 'Onto1Fixed']:
+    for num_distractors in range(0, 5):
+        for reward_type in ['Sparse', 'Dense']:
+            initial_qpos = {
+                'robot0:slide0': 0.405,
+                'robot0:slide1': 0.48,
+                'robot0:slide2': 0.0,
+            }
+            for i in range(num_distractors + 2):
+                if not (i == 1 and task.endswith('Fixed')):  # A welded block has no joint.
+                    initial_qpos[F"object{i}:joint"] = [1.25, 0.53, .4 + i*.06, 1., 0., 0., 0.]
+
+            register(
+                id=f'Stack{task}_{num_distractors}Distractors_{reward_type}-v1',
+                entry_point='multi_object_fetch.env:StackEnv',
+                kwargs={
+                    'reward_type': reward_type,
+                    'initial_qpos': initial_qpos,
+                    'num_distractors': num_distractors,
+                    'task': task,
+                    'environment': 'Stack',
+                },
+                max_episode_steps=200,
+            )
