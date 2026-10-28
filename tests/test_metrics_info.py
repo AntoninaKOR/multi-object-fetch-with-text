@@ -461,3 +461,33 @@ def test_stack_xy_tolerance(offset, success):
         _, _, done, info = env.step(move_towards(env, away, 0.0))
         check_stack_step(env, info)
     assert info['success'] == success and info['on_base'] == success and not done
+
+
+@pytest.mark.parametrize('task', STACK_TASKS)
+def test_stack_staged_reward(task):
+    """Every stage of a scripted stack raises the staged reward; letting go on the base never lowers it."""
+    env = make(f'Stack{task}_2Distractors_Staged-v1', seed=1)
+    env.reset()
+    obj, goal = site(env, 'object0'), env.goal.copy()
+    phases = {}
+    for k, (pos, gripper, steps) in enumerate(stack_plan(obj, goal)):
+        for _ in range(steps):
+            _, reward, done, info = env.step(move_towards(env, np.asarray(pos), gripper))
+            check_stack_step(env, info)
+            assert reward == pytest.approx(env.staged_reward()) and 0.0 <= reward <= 1.0 and not done
+            if info['success']:
+                assert reward == 1.0
+            elif info['on_base']:
+                assert reward == (0.8 if info['grasped'] else 0.9)
+            elif info['grasped']:
+                assert 0.4 <= reward < 0.8
+            else:
+                assert reward <= 0.2
+            phases.setdefault(k, []).append(reward)
+    approach, grasp, lift, carry, lower, release, retreat = (phases[k] for k in range(1, 8))
+    assert approach[-1] > phases[0][0]  # closer to the block
+    assert grasp[-1] == pytest.approx(0.4, abs=0.01)  # grasped, still on the table
+    assert lift[-1] > 0.5  # at the stacking height, not yet over the base
+    assert carry[-1] > lift[-1]  # aligned over the base
+    assert lower[-1] == 0.8  # held on the base
+    assert min(release + retreat) >= 0.8 and retreat[-1] == 1.0

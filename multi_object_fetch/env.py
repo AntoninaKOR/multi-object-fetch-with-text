@@ -726,7 +726,7 @@ class StackEnv(ManipulateEnv):
         base_resting = abs(base_pos[2] - self.height_offset) < self.ON_TOP_TOLERANCE
         speed = np.linalg.norm(self.sim.data.get_site_xvelp('object0'))
         table_top = self.height_offset - self.object_size
-        return {"on_base": bool(on_base), "base_resting": bool(base_resting),
+        return {"on_base": bool(on_base), "base_resting": bool(base_resting), "grasped": bool(grasped),
                 "placed": bool(on_base and base_resting and 'object1' in contacts and not grasped
                                and speed < self.PLACED_SPEED),
                 "dropped": bool(min(object_pos[2], base_pos[2]) < table_top)}
@@ -737,11 +737,40 @@ class StackEnv(ManipulateEnv):
     def compute_reward(self, achieved_goal, goal, info):
         if self.reward_type == 'Sparse':
             return -np.array(not self.success()).astype(np.float32)
+        if self.reward_type == 'Staged':
+            return self.staged_reward()
         # Dense: 1 once placed; until then at most 0.9, so holding object0 on the base is worth less than letting go.
         if self.success():
             return 1.0
         grip_dist = np.linalg.norm(np.squeeze(self.sim.data.get_site_xpos('object0')).copy() - np.squeeze(self.sim.data.get_site_xpos('robot0:grip')).copy())
         return 0.8 * np.exp(-20 * self.goal_distance()) + 0.1 * np.exp(-10 * grip_dist)
+
+    def staged_reward(self):
+        """Stepped dense reward (reward_type Staged): each stage of the stack sets a floor above the previous one.
+
+        reach object0: 0..0.2 (1 - tanh(5 * gripper distance)); grasped: 0.4; grasped and lifted to at least the
+        stacking height: 0.5, plus up to 0.2 for horizontal alignment over the base (1 - tanh(10 * xy distance)) and,
+        once over the top face, up to 0.1 for lowering onto it (1 - tanh(10 * height above the stacked position));
+        on_base: 0.8 while held, 0.9 once released (so letting go never lowers the reward); placed: 1.
+        """
+        state = self.stack_info()
+        if state["placed"]:
+            return 1.0
+        if state["on_base"]:
+            return 0.8 if state["grasped"] else 0.9
+        object_pos = np.squeeze(self.sim.data.get_site_xpos('object0')).copy()
+        if not state["grasped"]:
+            grip_dist = np.linalg.norm(object_pos - np.squeeze(self.sim.data.get_site_xpos('robot0:grip')).copy())
+            return 0.2 * (1 - np.tanh(5 * grip_dist))
+        reward = 0.4
+        offset = object_pos - np.squeeze(self.sim.data.get_site_xpos('object1')).copy()
+        height = offset[2] - 2 * self.object_size  # Above the stacked position.
+        if height > -self.ON_TOP_TOLERANCE:
+            xy_dist = np.linalg.norm(offset[:2])
+            reward += 0.1 + 0.2 * (1 - np.tanh(10 * xy_dist))
+            if xy_dist < np.sqrt(2) * self.object_size:
+                reward += 0.1 * (1 - np.tanh(10 * max(height, 0.0)))
+        return reward
 
     def goal_distance(self):
         return float(np.linalg.norm(np.squeeze(self.sim.data.get_site_xpos('object0')).copy() - self._sample_goal()))
