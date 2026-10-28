@@ -708,7 +708,10 @@ class StackEnv(ManipulateEnv):
         return obs, reward, done or info.get("dropped", False), info
 
     def stack_info(self):
-        """on_base: object0 is centered over the base's top face, one block height above it (it may still be held).
+        """on_base: object0's center is within the half-diagonal (sqrt(2) * object_size) of the base's center
+            horizontally, so anywhere over the top face including its corners, and one block height above it
+            (it may still be held). Offsets past an edge fit the circle but cannot rest: placed also needs contact
+            and stillness.
         base_resting: the base rests on the table (welded, or a free block on any face, not lifted).
         placed: on_base, base_resting, object0 touches the base, is released (not grasped) and still.
         dropped: object0 or the base fell off the table (center below the table top).
@@ -718,7 +721,7 @@ class StackEnv(ManipulateEnv):
         offset = object_pos - base_pos
         contacts = self._object0_contacts()
         grasped = len(contacts & set(self.FINGERS)) == 2 and self._grasp_geometry()["between_fingers"]
-        on_base = (np.linalg.norm(offset[:2]) < self.object_size
+        on_base = (np.linalg.norm(offset[:2]) < np.sqrt(2) * self.object_size
                    and abs(offset[2] - 2 * self.object_size) < self.ON_TOP_TOLERANCE)
         base_resting = abs(base_pos[2] - self.height_offset) < self.ON_TOP_TOLERANCE
         speed = np.linalg.norm(self.sim.data.get_site_xvelp('object0'))

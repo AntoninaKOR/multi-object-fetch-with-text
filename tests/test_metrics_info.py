@@ -442,3 +442,22 @@ def test_stack_instructions_are_embedded():
     for key, sentence in INSTRUCTIONS.items():
         if key[0] == 'Stack':
             assert sentence in env.token_cache and sentence in env.embed_cache, sentence
+
+
+@pytest.mark.parametrize('offset, success', [((0.4, 0.4), True),  # stable over a corner region (0.57 side away)
+                                             ((0.6, 0.0), False)])  # center past the edge: tips off
+def test_stack_xy_tolerance(offset, success):
+    env = make('StackOnto1Fixed_0Distractors_Dense-v1')
+    env.reset()
+    side = 2 * env.object_size
+    env._set_object_xy('object1', [1.3, 0.75])  # table center: a block tipping off the base stays on the table
+    env._set_object_xy('object0', [1.3, 1.0])
+    base = site(env, 'object1')
+    away = base + [0, -0.25, 0.3]  # the gripper starts right beside the base
+    for _ in range(15):
+        env.step(move_towards(env, away, 0.0))
+    set_object(env, 'object0', base + [offset[0] * side, offset[1] * side, side + 0.001])
+    for _ in range(25):
+        _, _, done, info = env.step(move_towards(env, away, 0.0))
+        check_stack_step(env, info)
+    assert info['success'] == success and info['on_base'] == success and not done
