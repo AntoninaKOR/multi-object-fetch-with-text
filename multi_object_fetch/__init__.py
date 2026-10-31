@@ -45,9 +45,10 @@ for environment in ['Reach', 'Push', 'Pick']:
 
 # Stack: put object0 on object1 (Onto1Fixed: object1 is welded to the table). Distractors are extra loose blocks.
 # Staged: stepped dense reward, one floor per stage (see StackEnv.staged_reward).
+# ManiSkill: ManiSkill StackCube-v1's normalized dense reward (see StackEnv.maniskill_reward).
 for task in ['Onto1', 'Onto1Fixed']:
     for num_distractors in range(0, 5):
-        for reward_type in ['Sparse', 'Dense', 'Staged']:
+        for reward_type in ['Sparse', 'Dense', 'Staged', 'ManiSkill']:
             initial_qpos = {
                 'robot0:slide0': 0.405,
                 'robot0:slide1': 0.48,

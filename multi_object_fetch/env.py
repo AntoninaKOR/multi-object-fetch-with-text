@@ -739,6 +739,8 @@ class StackEnv(ManipulateEnv):
             return -np.array(not self.success()).astype(np.float32)
         if self.reward_type == 'Staged':
             return self.staged_reward()
+        if self.reward_type == 'ManiSkill':
+            return self.maniskill_reward()
         # Dense: 1 once placed; until then at most 0.9, so holding object0 on the base is worth less than letting go.
         if self.success():
             return 1.0
@@ -771,6 +773,39 @@ class StackEnv(ManipulateEnv):
             if xy_dist < np.sqrt(2) * self.object_size:
                 reward += 0.1 * (1 - np.tanh(10 * max(height, 0.0)))
         return reward
+
+    FINGER_JOINTS = ('robot0:l_gripper_finger_joint', 'robot0:r_gripper_finger_joint')
+
+    def maniskill_reward(self):
+        """ManiSkill StackCube-v1 normalized dense reward (compute_dense_reward / 8), ported (reward_type ManiSkill).
+
+        Later cases override earlier ones, as in ManiSkill:
+        reach: 2 * (1 - tanh(5 * gripper-to-object0 distance));
+        grasped: 4 + (1 - tanh(5 * object0-to-goal distance)), goal = one block height above the base;
+        on_base: 6 + (ungrasp + static) / 2, ungrasp = finger opening / maximum opening (1 once released),
+            static = 1 - tanh(10 * linear speed + angular speed);
+        placed: 8.
+        Grasped, on_base and placed are this env's definitions (see stack_info), not ManiSkill's thresholds.
+        """
+        state = self.stack_info()
+        if state["placed"]:
+            return 1.0
+        if state["on_base"]:
+            if state["grasped"]:
+                opening = sum(self.sim.data.get_joint_qpos(name) for name in self.FINGER_JOINTS)
+                ungrasp = opening / sum(self.sim.model.jnt_range[self.sim.model.joint_name2id(name)][1]
+                                        for name in self.FINGER_JOINTS)
+            else:
+                ungrasp = 1.0
+            speed = np.linalg.norm(self.sim.data.get_site_xvelp('object0'))
+            angular_speed = np.linalg.norm(self.sim.data.get_site_xvelr('object0'))
+            static = 1 - np.tanh(10 * speed + angular_speed)
+            return (6 + (ungrasp + static) / 2) / 8
+        if state["grasped"]:
+            return (4 + 1 - np.tanh(5 * self.goal_distance())) / 8
+        grip_dist = np.linalg.norm(np.squeeze(self.sim.data.get_site_xpos('object0')).copy()
+                                   - np.squeeze(self.sim.data.get_site_xpos('robot0:grip')).copy())
+        return 2 * (1 - np.tanh(5 * grip_dist)) / 8
 
     def goal_distance(self):
         return float(np.linalg.norm(np.squeeze(self.sim.data.get_site_xpos('object0')).copy() - self._sample_goal()))

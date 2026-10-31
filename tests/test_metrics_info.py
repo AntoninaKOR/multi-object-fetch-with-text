@@ -491,3 +491,29 @@ def test_stack_staged_reward(task):
     assert carry[-1] > lift[-1]  # aligned over the base
     assert lower[-1] == 0.8  # held on the base
     assert min(release + retreat) >= 0.8 and retreat[-1] == 1.0
+
+
+@pytest.mark.parametrize('task', STACK_TASKS)
+def test_stack_maniskill_reward(task):
+    """ManiSkill StackCube-v1's normalized reward: reach <= 0.25 < grasped [0.5, 0.625] < on base [0.75, 0.875] < 1."""
+    env = make(f'Stack{task}_2Distractors_ManiSkill-v1', seed=1)
+    env.reset()
+    phases = {}
+    for k, (pos, gripper, steps) in enumerate(stack_plan(site(env, 'object0'), env.goal.copy())):
+        for _ in range(steps):
+            _, reward, done, info = env.step(move_towards(env, np.asarray(pos), gripper))
+            check_stack_step(env, info)
+            assert reward == pytest.approx(env.maniskill_reward()) and not done
+            if info['success']:
+                assert reward == 1.0
+            elif info['on_base']:
+                assert 0.75 <= reward <= 0.875
+            elif info['grasped']:
+                assert 0.5 <= reward <= 0.625
+                assert reward == pytest.approx((5 - np.tanh(5 * info['dist'])) / 8)
+            else:
+                assert 0 <= reward <= 0.25
+            phases.setdefault(k, []).append(reward)
+    assert phases[1][-1] > phases[0][0]  # closer to the block
+    assert phases[4][-1] > phases[3][0]  # carried toward the goal
+    assert phases[7][-1] == 1.0
