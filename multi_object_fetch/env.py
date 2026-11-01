@@ -8,6 +8,7 @@ from fetch_block_construction.envs.robotics import fetch_env
 from gym import utils as gym_utils
 from typing import Dict, Any
 from multi_object_fetch.assets.generate_multi_camera_xml import generate_multi_camera_xml
+from mujoco_py import functions
 from mujoco_py.generated import const
 from mujoco_py.modder import TextureModder
 from colormath.color_objects import sRGBColor, LabColor
@@ -140,6 +141,7 @@ class MultiObjectFetchEnv(fetch_env.FetchEnv, gym_utils.EzPickle, ColorsMixin, A
     def render(self, mode='human', size=None):
         self._render_callback()
         size = size if size is not None else (self.width, self.height)
+        self._bind_offscreen_buffer()
         if mode == "seg":
             seg = self.sim.render(size[0], size[1], camera_name=self.viewpoint, segmentation=True)
             ids = seg[:, :, 1]
@@ -164,6 +166,14 @@ class MultiObjectFetchEnv(fetch_env.FetchEnv, gym_utils.EzPickle, ColorsMixin, A
         else:
             # original image is upside-down, so flip it
             return self.sim.render(size[0], size[1], camera_name=self.viewpoint)[::-1, :, :].copy()
+
+    def _bind_offscreen_buffer(self):
+        # mujoco_py's EGL backend shares one OpenGL context among all simulations on a GPU, and MjSim.render draws into
+        # whichever framebuffer is bound: that of the last simulation rendered. Without binding this simulation's own
+        # buffer, its first frame after another environment rendered is its previous frame.
+        context = self.sim._render_context_offscreen
+        if context is not None:
+            functions.mjr_setBuffer(const.FB_OFFSCREEN, context.con)
 
     @abstractmethod
     def success(self) -> bool:
