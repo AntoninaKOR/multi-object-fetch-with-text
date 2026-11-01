@@ -35,8 +35,8 @@ _TARGET = {
     "OddGroups": "the odd one out",
 }
 
-# Stack tasks name the block to move and the block to put it on.
-STACK_TASKS = ("Onto1", "Onto1Fixed")
+# Stack tasks name the block to move and the block to put it on (for Onto2, the top block of the tower).
+STACK_TASKS = ("Onto1", "Onto1Fixed", "Onto2", "Onto2Fixed")
 
 
 def build_instruction(

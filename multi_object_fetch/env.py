@@ -512,14 +512,15 @@ class ManipulateEnv(MultiObjectFetchEnv):
         self._place_objects()
         return True
 
-    def _place_objects(self):
-        """Randomize start position of objects."""
+    def _place_objects(self, object_names=None):
+        """Randomize start position of objects (default: all blocks), at least a block diagonal apart."""
+        object_names = self.object_names if object_names is None else object_names
         prev_obj_xpos = []
 
         valid_configuration = False
         failed_attempts = 0
         while not valid_configuration:
-            for obj_name in self.object_names:
+            for obj_name in object_names:
                 for block_attempt in range(0, 100):
                     object_xypos = self.initial_gripper_xpos[:2] + self.np_random.uniform(-self.obj_range, self.obj_range, size=2)
                     if np.all([np.linalg.norm(object_xypos - other_xpos) >= 2 * np.sqrt(2) * self.object_size for other_xpos in prev_obj_xpos]):
@@ -534,7 +535,7 @@ class ManipulateEnv(MultiObjectFetchEnv):
                 else:
                     # If a valid configuration has been found for the last object.
                     failed_attempts = 0
-                    if len(prev_obj_xpos) == len(self.object_names) - 1:
+                    if len(prev_obj_xpos) == len(object_names) - 1:
                         valid_configuration = True
 
                 prev_obj_xpos.append(object_xypos)
@@ -652,17 +653,39 @@ class ManipulateEnv(MultiObjectFetchEnv):
 
 
 class StackEnv(ManipulateEnv):
-    """Put object0 on top of object1 (the base); object2, ... are loose distractor blocks.
+    """Put object0 on top of a tower object1, ..., objectN (object1 at the bottom; N = 1 for Onto1, 2 for Onto2).
 
-    Onto1Fixed: the base is welded to the table. Onto1: the base is a free block that can be pushed or
-    knocked over; that does not end the episode. There is no target location: the goal is the top of the
-    base, wherever the base is. The episode ends (failed) when object0 or object1 falls off the table.
+    The base is the tower's top block, the one the instruction names. Blocks after the tower are loose distractors.
+    Fixed tasks: the bottom block is welded to the table; blocks above it are free. Otherwise the whole tower is
+    free and can be pushed or knocked over; that does not end the episode. There is no target location: the goal
+    is the top of the base, wherever the base is. The episode ends (failed) when object0 or a tower block falls
+    off the table.
     """
-    NUM_TASK_OBJECTS = 2
+    TOWER_HEIGHTS = {'Onto1': 1, 'Onto1Fixed': 1, 'Onto2': 2, 'Onto2Fixed': 2}
     ON_TOP_TOLERANCE = 0.01  # object0 sits one block height (2 * object_size) above the base, within this.
+    TOWER_GRIPPER_CLEARANCE = 0.12  # A tower of 2+ blocks starts at least this far (xy) from the gripper.
+
+    @property
+    def tower_height(self):
+        if self.task not in self.TOWER_HEIGHTS:
+            raise ValueError("Invalid task: {}".format(self.task))
+        return self.TOWER_HEIGHTS[self.task]
+
+    @property
+    def NUM_TASK_OBJECTS(self):
+        return 1 + self.tower_height
+
+    @property
+    def tower_names(self):
+        return ['object{}'.format(i) for i in range(1, self.tower_height + 1)]
+
+    @property
+    def base_name(self):
+        return self.tower_names[-1]
 
     @property
     def fixed_base(self):
+        """The tower's bottom block is welded to the table."""
         return self.task.endswith('Fixed')
 
     def _model_xml(self):
@@ -671,11 +694,9 @@ class StackEnv(ManipulateEnv):
 
     def _reset_sim(self):
         MultiObjectFetchEnv._reset_sim(self)
-        if self.task not in ('Onto1', 'Onto1Fixed'):
-            raise ValueError("Invalid task: {}".format(self.task))
 
         color_indices = self.np_random.choice(len(self.colors), size=self.num_blocks, replace=False)
-        self.target_color, self.base_color = int(color_indices[0]), int(color_indices[1])
+        self.target_color, self.base_color = int(color_indices[0]), int(color_indices[self.tower_height])
         for object_name, color_idx in zip(self.object_names, color_indices):
             self.sim.model.geom_rgba[self.sim.model.geom_name2id(object_name)][:3] = self.colors[color_idx]
         self.instruction = build_instruction(self.environment, self.task, color_name=self.color_names[self.target_color],
@@ -684,19 +705,40 @@ class StackEnv(ManipulateEnv):
         self.sim.model.site_rgba[self.sim.model.site_name2id('target0')][3] = 0
 
         self._place_objects()
-        self.base_start_xy = np.squeeze(self.sim.data.get_site_xpos('object1'))[:2].copy()
+        self.base_start_xy = np.squeeze(self.sim.data.get_site_xpos(self.base_name))[:2].copy()
         return True
 
-    def _set_object_xy(self, obj_name, xy):
-        if obj_name == 'object1' and self.fixed_base:
-            self.sim.model.body_pos[self.sim.model.body_name2id(obj_name)] = [xy[0], xy[1], self.height_offset]
-            self.sim.forward()
+    def _place_objects(self):
+        """Scatter object0, the tower's bottom block and the distractors, then stack the tower on its bottom block.
+
+        A tower of two or more blocks reaches the gripper's start height, so its bottom block is kept
+        TOWER_GRIPPER_CLEARANCE (xy) away from the gripper's start; otherwise the first steps sweep it over.
+        """
+        upper = self.tower_names[1:]
+        for _ in range(100):
+            super()._place_objects([name for name in self.object_names if name not in upper])
+            bottom_xy = np.squeeze(self.sim.data.get_site_xpos('object1'))[:2].copy()
+            if not upper or np.linalg.norm(bottom_xy - self.initial_gripper_xpos[:2]) >= self.TOWER_GRIPPER_CLEARANCE:
+                break
         else:
-            super()._set_object_xy(obj_name, xy)
+            raise ValueError("Failed to place the tower clear of the gripper after 100 attempts.")
+        for level, name in enumerate(upper, start=1):
+            self._set_object_xy(name, bottom_xy, level)
+
+    def _set_object_xy(self, obj_name, xy, level=0):
+        """Put a block at xy, level block heights above the table (0: on the table)."""
+        z = self.height_offset + 2 * self.object_size * level
+        if obj_name == 'object1' and self.fixed_base:
+            self.sim.model.body_pos[self.sim.model.body_name2id(obj_name)] = [xy[0], xy[1], z]
+        else:
+            object_qpos = self.sim.data.get_joint_qpos(F"{obj_name}:joint")
+            object_qpos[:3] = [xy[0], xy[1], z]
+            self.sim.data.set_joint_qpos(F"{obj_name}:joint", object_qpos)
+        self.sim.forward()
 
     def _sample_goal(self):
         """Where object0's center is when it sits squarely on the base."""
-        return np.squeeze(self.sim.data.get_site_xpos('object1')).copy() + [0, 0, 2 * self.object_size]
+        return np.squeeze(self.sim.data.get_site_xpos(self.base_name)).copy() + [0, 0, 2 * self.object_size]
 
     def _step_callback(self):
         super()._step_callback()
@@ -707,29 +749,34 @@ class StackEnv(ManipulateEnv):
         # A block the stack needs fell off the table: the task cannot be finished any more.
         return obs, reward, done or info.get("dropped", False), info
 
+    def _on_top(self, upper_pos, lower_pos):
+        """upper's center is within the half-diagonal (sqrt(2) * object_size) of lower's center horizontally, so
+        anywhere over its top face including the corners, and one block height above it."""
+        offset = upper_pos - lower_pos
+        return (np.linalg.norm(offset[:2]) < np.sqrt(2) * self.object_size
+                and abs(offset[2] - 2 * self.object_size) < self.ON_TOP_TOLERANCE)
+
     def stack_info(self):
-        """on_base: object0's center is within the half-diagonal (sqrt(2) * object_size) of the base's center
-            horizontally, so anywhere over the top face including its corners, and one block height above it
-            (it may still be held). Offsets past an edge fit the circle but cannot rest: placed also needs contact
-            and stillness.
-        base_resting: the base rests on the table (welded, or a free block on any face, not lifted).
+        """on_base: object0 is on top of the base (see _on_top; it may still be held). Offsets past an edge fit
+            the circle but cannot rest: placed also needs contact and stillness.
+        base_resting: the tower stands: its bottom block rests on the table (welded, or a free block on any face,
+            not lifted) and every block above it is on top of the one below.
         placed: on_base, base_resting, object0 touches the base, is released (not grasped) and still.
-        dropped: object0 or the base fell off the table (center below the table top).
+        dropped: object0 or a tower block fell off the table (center below the table top).
         """
         object_pos = np.squeeze(self.sim.data.get_site_xpos('object0')).copy()
-        base_pos = np.squeeze(self.sim.data.get_site_xpos('object1')).copy()
-        offset = object_pos - base_pos
+        tower_pos = [np.squeeze(self.sim.data.get_site_xpos(name)).copy() for name in self.tower_names]
         contacts = self._object0_contacts()
         grasped = len(contacts & set(self.FINGERS)) == 2 and self._grasp_geometry()["between_fingers"]
-        on_base = (np.linalg.norm(offset[:2]) < np.sqrt(2) * self.object_size
-                   and abs(offset[2] - 2 * self.object_size) < self.ON_TOP_TOLERANCE)
-        base_resting = abs(base_pos[2] - self.height_offset) < self.ON_TOP_TOLERANCE
+        on_base = self._on_top(object_pos, tower_pos[-1])
+        base_resting = (abs(tower_pos[0][2] - self.height_offset) < self.ON_TOP_TOLERANCE
+                        and all(self._on_top(upper, lower) for lower, upper in zip(tower_pos, tower_pos[1:])))
         speed = np.linalg.norm(self.sim.data.get_site_xvelp('object0'))
         table_top = self.height_offset - self.object_size
         return {"on_base": bool(on_base), "base_resting": bool(base_resting), "grasped": bool(grasped),
-                "placed": bool(on_base and base_resting and 'object1' in contacts and not grasped
+                "placed": bool(on_base and base_resting and self.base_name in contacts and not grasped
                                and speed < self.PLACED_SPEED),
-                "dropped": bool(min(object_pos[2], base_pos[2]) < table_top)}
+                "dropped": bool(min(pos[2] for pos in [object_pos] + tower_pos) < table_top)}
 
     def success(self):
         return self.stack_info()["placed"]
@@ -765,7 +812,7 @@ class StackEnv(ManipulateEnv):
             grip_dist = np.linalg.norm(object_pos - np.squeeze(self.sim.data.get_site_xpos('robot0:grip')).copy())
             return 0.2 * (1 - np.tanh(5 * grip_dist))
         reward = 0.4
-        offset = object_pos - np.squeeze(self.sim.data.get_site_xpos('object1')).copy()
+        offset = object_pos - np.squeeze(self.sim.data.get_site_xpos(self.base_name)).copy()
         height = offset[2] - 2 * self.object_size  # Above the stacked position.
         if height > -self.ON_TOP_TOLERANCE:
             xy_dist = np.linalg.norm(offset[:2])
@@ -812,16 +859,17 @@ class StackEnv(ManipulateEnv):
 
     def episode_info(self):
         info = super().episode_info()
-        info["goal_height"] = 2 * self.object_size  # Always on top of the base, which rests on the table.
+        info["goal_height"] = 2 * self.object_size * self.tower_height  # Always on top of a standing tower.
         info["goal_needs_lift"] = True
         info["base_color"] = self.base_color
         info["fixed_base"] = self.fixed_base
+        info["tower_height"] = self.tower_height
         return info
 
     def step_info(self):
         """ManipulateEnv's flags for object0, with placed meaning placed on the base (see stack_info)."""
         info = super().step_info()
         info.update(self.stack_info())
-        base_pos = np.squeeze(self.sim.data.get_site_xpos('object1')).copy()
+        base_pos = np.squeeze(self.sim.data.get_site_xpos(self.base_name)).copy()
         info["base_shift"] = float(np.linalg.norm(base_pos[:2] - self.base_start_xy))
         return info

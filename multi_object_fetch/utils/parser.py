@@ -5,7 +5,7 @@ class MOFParser(argparse.ArgumentParser):
     def __init__(self) -> None:
         super().__init__()
         self.add_argument("--environment", type=str, choices=["Reach", "Push", "Pick", "Stack"], default="Reach")
-        self.add_argument("--task", type=str, choices=['Red', 'Reddest', 'Odd', 'OddGroups', 'Multicolor', 'Onto1', 'Onto1Fixed'], default="Red",
+        self.add_argument("--task", type=str, choices=['Red', 'Reddest', 'Odd', 'OddGroups', 'Multicolor', 'Onto1', 'Onto1Fixed', 'Onto2', 'Onto2Fixed'], default="Red",
                           help="The task to run.")
         self.add_argument("--num_distractors", type=int, default=2,
                           help="The number of distractors in the environment. Must be between 0 and 10.")

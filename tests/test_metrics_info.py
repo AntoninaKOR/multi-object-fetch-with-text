@@ -303,14 +303,18 @@ def test_unstable_step(name, monkeypatch):
     assert ('goal_height' in info) == name.startswith('Pick')
 
 
-STACK_TASKS = ['Onto1', 'Onto1Fixed']
+STACK_TASKS = ['Onto1', 'Onto1Fixed', 'Onto2', 'Onto2Fixed']
 
 
 def stack_plan(obj, goal):
-    """Grasp object0, carry it high, lower it onto the base and let go."""
+    """Grasp object0, carry it high (above the goal), lower it onto the base and let go.
+
+    The approach stays at the goal height so that the gripper does not sweep a tall tower over."""
     above = goal + [0, 0, 0.08]
-    return [(obj + [0, 0, 0.1], 1.0, 15), (obj, 1.0, 15), (obj, -1.0, 8), (obj + [0, 0, 0.2], -1.0, 15),
-            (above, -1.0, 30), (goal + [0, 0, 0.005], -1.0, 20), (goal + [0, 0, 0.005], 1.0, 10),
+    approach = obj + [0, 0, max(0.1, goal[2] - obj[2])]
+    lift = obj + [0, 0, max(0.2, above[2] - obj[2])]
+    return [(approach, 1.0, 15), (obj, 1.0, 15), (obj, -1.0, 8), (lift, -1.0, 15),
+            (above, -1.0, 30), (goal, -1.0, 20), (goal, 1.0, 10),
             (above, 1.0, 15)]
 
 
@@ -328,7 +332,7 @@ def run_stack_plan(env, plan):
 
 def check_stack_step(env, info):
     assert info['success'] == info['placed']
-    assert info['placed'] == (info['on_base'] and info['base_resting'] and 'object1' in info['object_contacts']
+    assert info['placed'] == (info['on_base'] and info['base_resting'] and env.base_name in info['object_contacts']
                               and not info['grasped'] and info['object_speed'] < env.PLACED_SPEED)
     assert info['dist'] == pytest.approx(np.linalg.norm(site(env, 'object0') - env.goal), abs=1e-6)
 
@@ -338,21 +342,30 @@ def check_stack_step(env, info):
 def test_stack_scene(task, num_distractors):
     env = LanguageWrapper(make(f'Stack{task}_{num_distractors}Distractors_Dense-v1'))
     b = env.unwrapped
-    assert b.num_blocks == num_distractors + 2
+    height = int(task[len('Onto')])
+    assert b.tower_height == height and b.tower_names == [f'object{i}' for i in range(1, height + 1)]
+    assert b.num_blocks == num_distractors + 1 + height
     assert ('object1:joint' in b.sim.model.joint_names) != task.endswith('Fixed')
+    assert all(f'{name}:joint' in b.sim.model.joint_names for name in b.tower_names[1:])  # only the bottom is welded
     for _ in range(5):
         env.reset()
         assert b.sim.model.site_rgba[b.sim.model.site_name2id('target0')][3] == 0  # no target location
         rgba = [tuple(b.sim.model.geom_rgba[b.sim.model.geom_name2id(n)][:3]) for n in b.object_names]
         assert len(set(rgba)) == b.num_blocks
-        assert np.allclose(rgba[0], b.colors[b.target_color]) and np.allclose(rgba[1], b.colors[b.base_color])
+        assert np.allclose(rgba[0], b.colors[b.target_color]) and np.allclose(rgba[height], b.colors[b.base_color])
         assert b.instruction == f'put the {COLOR_NAMES[b.target_color]} block on the {COLOR_NAMES[b.base_color]} block'
-        assert np.allclose(b.goal, site(b, 'object1') + [0, 0, 2 * b.object_size])
-        positions = [site(b, n) for n in b.object_names]
-        for i in range(b.num_blocks):
-            assert positions[i][2] == pytest.approx(b.height_offset, abs=0.001)
+        assert np.allclose(b.goal, site(b, b.base_name) + [0, 0, 2 * b.object_size])
+        assert b.goal[2] == pytest.approx(b.height_offset + 2 * b.object_size * height, abs=0.001)
+        bottom = site(b, 'object1')
+        if height > 1:  # clear of the gripper, which starts at the height of the second block
+            assert np.linalg.norm(bottom[:2] - b.initial_gripper_xpos[:2]) >= b.TOWER_GRIPPER_CLEARANCE
+        for level, name in enumerate(b.tower_names):  # stacked straight up
+            assert np.allclose(site(b, name), bottom + [0, 0, 2 * b.object_size * level], atol=0.001)
+        scattered = [site(b, n) for n in b.object_names if n not in b.tower_names[1:]]
+        for i in range(len(scattered)):
+            assert scattered[i][2] == pytest.approx(b.height_offset, abs=0.001)
             for j in range(i):
-                assert np.linalg.norm(positions[i][:2] - positions[j][:2]) >= 2 * np.sqrt(2) * b.object_size - 1e-9
+                assert np.linalg.norm(scattered[i][:2] - scattered[j][:2]) >= 2 * np.sqrt(2) * b.object_size - 1e-9
         _, reward, done, info = env.step(np.zeros(4))
         check_stack_step(b, info)
         assert 0 <= reward < 0.9 and not done
@@ -360,6 +373,8 @@ def test_stack_scene(task, num_distractors):
         assert info['instruction'] == b.instruction
         assert (info['target_color'], info['base_color']) == (b.target_color, b.base_color)
         assert info['fixed_base'] == task.endswith('Fixed') and info['goal_needs_lift']
+        assert info['tower_height'] == height
+        assert info['goal_height'] == pytest.approx(2 * b.object_size * height)
 
 
 @pytest.mark.parametrize('task', STACK_TASKS)
@@ -384,7 +399,7 @@ def test_stack_sparse_reward():
     assert rewards[0] == -1.0 and rewards[-1] == 0.0
 
 
-@pytest.mark.parametrize('task', STACK_TASKS)
+@pytest.mark.parametrize('task', ['Onto1', 'Onto1Fixed'])
 def test_stack_push_base(task):
     """The gripper pushes into the base from the side: a welded base stays, a free one slides (the goal follows)."""
     env = make(f'Stack{task}_0Distractors_Dense-v1')
@@ -419,19 +434,38 @@ def test_stack_free_base_knocked_over_continues():
     assert np.allclose(env.goal, site(env, 'object1') + [0, 0, 2 * env.object_size])
 
 
-@pytest.mark.parametrize('name', ['object0', 'object1'])
-def test_stack_dropped_block_ends_episode(name):
-    env = make('StackOnto1_1Distractors_Dense-v1')
+@pytest.mark.parametrize('task', ['Onto2', 'Onto2Fixed'])
+def test_stack_tower_knocked_apart_continues(task):
+    """The base came off the tower onto the table: not a drop, but the tower no longer stands, so object0 resting
+    on the base is not placed; the goal follows the base."""
+    env = make(f'Stack{task}_0Distractors_Dense-v1')
+    env.reset()
+    env._set_object_xy('object1', [1.3, 0.65])
+    env._set_object_xy('object2', [1.3, 0.85])  # beside the tower's bottom block
+    env._set_object_xy('object0', [1.3, 0.85], level=1)  # resting on the base
+    for _ in range(25):
+        _, _, done, info = env.step(np.zeros(4))
+        assert not done and not info['dropped']
+    assert info['on_base'] and 'object2' in info['object_contacts']
+    assert not info['base_resting'] and not info['success']
+    assert np.allclose(env.goal, site(env, 'object2') + [0, 0, 2 * env.object_size])
+
+
+@pytest.mark.parametrize('task, name', [('Onto1', 'object0'), ('Onto1', 'object1'), ('Onto2', 'object1'),
+                                        ('Onto2', 'object2'), ('Onto2Fixed', 'object2')])
+def test_stack_dropped_block_ends_episode(task, name):
+    env = make(f'Stack{task}_1Distractors_Dense-v1')
     env.reset()
     set_object(env, name, [1.3, 0.25, env.height_offset - 0.2])  # beside the table, below its top
     _, _, done, info = env.step(np.zeros(4))
     assert done and info['dropped'] and not info['success']
 
 
-def test_stack_distractor_off_table_does_not_end_episode():
-    env = make('StackOnto1_1Distractors_Dense-v1')
+@pytest.mark.parametrize('task, name', [('Onto1', 'object2'), ('Onto2', 'object3')])
+def test_stack_distractor_off_table_does_not_end_episode(task, name):
+    env = make(f'Stack{task}_1Distractors_Dense-v1')
     env.reset()
-    set_object(env, 'object2', [1.3, 0.25, env.height_offset - 0.2])
+    set_object(env, name, [1.3, 0.25, env.height_offset - 0.2])
     _, _, done, info = env.step(np.zeros(4))
     assert not done and not info['dropped']
 
