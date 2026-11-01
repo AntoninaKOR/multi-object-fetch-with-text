@@ -345,8 +345,8 @@ def test_stack_scene(task, num_distractors):
     height = int(task[len('Onto')])
     assert b.tower_height == height and b.tower_names == [f'object{i}' for i in range(1, height + 1)]
     assert b.num_blocks == num_distractors + 1 + height
-    assert ('object1:joint' in b.sim.model.joint_names) != task.endswith('Fixed')
-    assert all(f'{name}:joint' in b.sim.model.joint_names for name in b.tower_names[1:])  # only the bottom is welded
+    for name in b.tower_names:  # Fixed: the whole tower is welded
+        assert (f'{name}:joint' in b.sim.model.joint_names) != task.endswith('Fixed')
     for _ in range(5):
         env.reset()
         assert b.sim.model.site_rgba[b.sim.model.site_name2id('target0')][3] == 0  # no target location
@@ -399,22 +399,23 @@ def test_stack_sparse_reward():
     assert rewards[0] == -1.0 and rewards[-1] == 0.0
 
 
-@pytest.mark.parametrize('task', ['Onto1', 'Onto1Fixed'])
+@pytest.mark.parametrize('task', ['Onto1', 'Onto1Fixed', 'Onto2Fixed'])
 def test_stack_push_base(task):
     """The gripper pushes into the base from the side: a welded base stays, a free one slides (the goal follows)."""
     env = make(f'Stack{task}_0Distractors_Dense-v1')
     env.reset()
-    env._set_object_xy('object1', [1.3, 0.65])
+    for level, name in enumerate(env.tower_names):
+        env._set_object_xy(name, [1.3, 0.65], level)
     env._set_object_xy('object0', [1.3, 0.95])  # out of the way
     env.base_start_xy = np.array([1.3, 0.65])
-    side = site(env, 'object1') + [0, -0.12, 0]
+    side = site(env, env.base_name) + [0, -0.12, 0]
     infos, _ = run_stack_plan(env, [(side + [0, 0, 0.1], -1.0, 15), (side, -1.0, 15), (side + [0, 0.17, 0], -1.0, 20)])
     shift = infos[-1]['base_shift']
     if task.endswith('Fixed'):
-        assert shift == 0.0
+        assert shift == 0.0 and infos[-1]['base_resting']
     else:
         assert shift > 0.03
-        assert np.allclose(env.goal, site(env, 'object1') + [0, 0, 2 * env.object_size])
+        assert np.allclose(env.goal, site(env, env.base_name) + [0, 0, 2 * env.object_size])
 
 
 def test_stack_free_base_knocked_over_continues():
@@ -434,7 +435,7 @@ def test_stack_free_base_knocked_over_continues():
     assert np.allclose(env.goal, site(env, 'object1') + [0, 0, 2 * env.object_size])
 
 
-@pytest.mark.parametrize('task', ['Onto2', 'Onto2Fixed'])
+@pytest.mark.parametrize('task', ['Onto2'])
 def test_stack_tower_knocked_apart_continues(task):
     """The base came off the tower onto the table: not a drop, but the tower no longer stands, so object0 resting
     on the base is not placed; the goal follows the base."""
@@ -452,7 +453,7 @@ def test_stack_tower_knocked_apart_continues(task):
 
 
 @pytest.mark.parametrize('task, name', [('Onto1', 'object0'), ('Onto1', 'object1'), ('Onto2', 'object1'),
-                                        ('Onto2', 'object2'), ('Onto2Fixed', 'object2')])
+                                        ('Onto2', 'object2'), ('Onto2Fixed', 'object0')])
 def test_stack_dropped_block_ends_episode(task, name):
     env = make(f'Stack{task}_1Distractors_Dense-v1')
     env.reset()

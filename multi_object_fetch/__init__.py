@@ -43,8 +43,8 @@ for environment in ['Reach', 'Push', 'Pick']:
                     max_episode_steps=max_episode_steps,
                 )
 
-# Stack: put object0 on a tower of N blocks object1, ..., objectN (OntoN; OntoNFixed: object1 is welded to the
-# table). Distractors are extra loose blocks.
+# Stack: put object0 on a tower of N blocks object1, ..., objectN (OntoN; OntoNFixed: the tower is welded in
+# place). Distractors are extra loose blocks.
 # Staged: stepped dense reward, one floor per stage (see StackEnv.staged_reward).
 # ManiSkill: ManiSkill StackCube-v1's normalized dense reward (see StackEnv.maniskill_reward).
 for task in ['Onto1', 'Onto1Fixed', 'Onto2', 'Onto2Fixed']:
@@ -57,7 +57,7 @@ for task in ['Onto1', 'Onto1Fixed', 'Onto2', 'Onto2Fixed']:
                 'robot0:slide2': 0.0,
             }
             for i in range(num_distractors + 1 + tower_height):
-                if not (i == 1 and task.endswith('Fixed')):  # A welded block has no joint.
+                if not (1 <= i <= tower_height and task.endswith('Fixed')):  # A welded block has no joint.
                     initial_qpos[F"object{i}:joint"] = [1.25, 0.53, .4 + i*.06, 1., 0., 0., 0.]
 
             register(

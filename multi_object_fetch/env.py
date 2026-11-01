@@ -656,8 +656,8 @@ class StackEnv(ManipulateEnv):
     """Put object0 on top of a tower object1, ..., objectN (object1 at the bottom; N = 1 for Onto1, 2 for Onto2).
 
     The base is the tower's top block, the one the instruction names. Blocks after the tower are loose distractors.
-    Fixed tasks: the bottom block is welded to the table; blocks above it are free. Otherwise the whole tower is
-    free and can be pushed or knocked over; that does not end the episode. There is no target location: the goal
+    Fixed tasks: the whole tower is welded in place. Otherwise every tower block is free and can be pushed or
+    knocked over; that does not end the episode. There is no target location: the goal
     is the top of the base, wherever the base is. The episode ends (failed) when object0 or a tower block falls
     off the table.
     """
@@ -685,12 +685,13 @@ class StackEnv(ManipulateEnv):
 
     @property
     def fixed_base(self):
-        """The tower's bottom block is welded to the table."""
+        """The tower blocks are welded in place."""
         return self.task.endswith('Fixed')
 
     def _model_xml(self):
+        fixed_blocks = tuple(range(1, self.tower_height + 1)) if self.fixed_base else ()
         return generate_multi_camera_xml(self.num_blocks, self.robot, task='pick_place', target_size=self.target_size,
-                                         object_size=self.object_size, fixed_blocks=(1,) if self.fixed_base else ())
+                                         object_size=self.object_size, fixed_blocks=fixed_blocks)
 
     def _reset_sim(self):
         MultiObjectFetchEnv._reset_sim(self)
@@ -728,7 +729,7 @@ class StackEnv(ManipulateEnv):
     def _set_object_xy(self, obj_name, xy, level=0):
         """Put a block at xy, level block heights above the table (0: on the table)."""
         z = self.height_offset + 2 * self.object_size * level
-        if obj_name == 'object1' and self.fixed_base:
+        if obj_name in self.tower_names and self.fixed_base:
             self.sim.model.body_pos[self.sim.model.body_name2id(obj_name)] = [xy[0], xy[1], z]
         else:
             object_qpos = self.sim.data.get_joint_qpos(F"{obj_name}:joint")
