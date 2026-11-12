@@ -49,9 +49,18 @@ base = '''
 </mujoco>
 '''
 
+# Mesh shapes face the frontview camera (same orientation as the camera, whose -z is the view direction).
+SHAPE_EULER = "0. 1.0 1.571"
+
+
 def generate_multi_camera_xml(num_blocks: int, robot: str, task='vbb', target_size=0.02, object_size=0.025, num_targets=0,
-                              fixed_blocks=()):
-    """fixed_blocks: ids of blocks without a free joint (welded to the world; move them via model.body_pos)."""
+                              shape_meshes=None, fixed_blocks=()):
+    """shape_meshes (reach only): {shape name: STL path}. Each target/distractor site gets a body "<site>:shapes" with
+    one invisible, non-colliding mesh geom "<site>:<shape name>" per shape, scaled by target_size; move the body
+    via model.body_pos and show a shape by setting its geom alpha.
+
+    fixed_blocks: ids of blocks without a free joint (welded to the world; move them via model.body_pos).
+    """
     if num_blocks <= (6 if not task == 'reach' else 5):
         colors = BASIC_COLORS[:max(num_blocks, num_targets)]
     else:
@@ -71,6 +80,14 @@ def generate_multi_camera_xml(num_blocks: int, robot: str, task='vbb', target_si
     sites = []
     block_bodies = []
     assets = []
+
+    if task == 'reach' and shape_meshes:
+        for shape, path in shape_meshes.items():
+            assets.append(f'<mesh name="shape_{shape}" file="{path}" scale="{target_size} {target_size} {target_size}"></mesh>')
+        for site in ['target0'] + [f'distractor{i}' for i in range(num_blocks)]:
+            geoms = "".join(f'<geom name="{site}:{shape}" type="mesh" mesh="shape_{shape}" contype="0" conaffinity="0" '
+                            f'mass="0.001" rgba="1 1 1 0"></geom>' for shape in shape_meshes)
+            block_bodies.append(f'<body name="{site}:shapes" pos="0 0 0.5" euler="{SHAPE_EULER}">{geoms}</body>')
 
     if task == 'reach':
         sites.append(f'<site name="target0" pos="0 0 0.5" size="{target_size} {target_size} {target_size}" rgba="1 0 0 1" type="sphere"></site>')
@@ -99,4 +116,4 @@ def generate_multi_camera_xml(num_blocks: int, robot: str, task='vbb', target_si
             sites.append(site_base.format(**dict(id=i, target_size=target_size, color=colors[i])))
 
     return base.format(**dict(assets="\n".join(assets), target_sites="\n".join(sites), robot_file=robot_file, object_bodies="\n".join(block_bodies))) \
-        if not task == 'reach' else base.format(**dict(assets="", target_sites="\n".join(sites), robot_file=robot_file, object_bodies=""))
+        if not task == 'reach' else base.format(**dict(assets="\n".join(assets), target_sites="\n".join(sites + block_bodies), robot_file=robot_file, object_bodies=""))

@@ -1,4 +1,6 @@
 """Tests for the per-step metric values that MultiObjectFetchEnv writes into `info` (see docs/metrics.md)."""
+from itertools import combinations
+
 import gym
 import numpy as np
 import pytest
@@ -13,10 +15,12 @@ if not hasattr(gym, 'GoalEnv'):
 
 from fetch_block_construction.envs.robotics import fetch_env  # noqa: E402
 from mujoco_py.builder import MujocoException  # noqa: E402
+from mujoco_py.generated import const  # noqa: E402
 
 import multi_object_fetch.env  # noqa: E402  # also registers the gym envs
 from multi_object_fetch.language import LanguageWrapper
-from multi_object_fetch.language.instructions import COLOR_NAMES
+from multi_object_fetch.language.instructions import (COLOR_NAMES, INSTRUCTIONS, MESH_SHAPE_NAMES,
+                                                    MULTICOLORSHAPE_HELDOUT, MULTISHAPE_NAMES)
 
 
 def make(name, seed=0):
@@ -552,3 +556,226 @@ def test_stack_maniskill_reward(task):
     assert phases[1][-1] > phases[0][0]  # closer to the block
     assert phases[4][-1] > phases[3][0]  # carried toward the goal
     assert phases[7][-1] == 1.0
+
+
+SHAPE = 'ReachMulticolorShape_{}Distractors_Dense-v1'
+
+
+def site_objects(env):
+    """(color index, shape index, position, bounding radius) of target0, then each distractor."""
+    objects = []
+    for name in ['target0'] + [f'distractor{i}' for i in range(env.num_distractors)]:
+        site_id = env.sim.model.site_name2id(name)
+        color = int(np.argmin(np.abs(env.colors - env.sim.model.site_rgba[site_id][:3]).sum(1)))
+        shape = env.shape_geoms.index(int(env.sim.model.site_type[site_id]))
+        objects.append((color, shape, site(env, name), env.site_radius(name)))
+    return objects
+
+
+@pytest.mark.parametrize('name', ['ReachMulticolor_2Distractors_Dense-v1', 'ReachRed_4Distractors_Dense-v1',
+                                  'PickMulticolor_2Distractors_Dense-v1'])
+def test_other_tasks_have_no_shape(name):
+    env = make(name)
+    env.reset()
+    _, _, _, info = env.step(env.action_space.sample())
+    assert info['target_shape'] == -1
+    if name.startswith('Reach'):
+        assert all(o[1] == 0 for o in site_objects(env))  # spheres only
+
+
+def test_every_instruction_is_embedded():
+    env = LanguageWrapper(make(SHAPE.format(1)))
+    for instruction in INSTRUCTIONS.values():
+        assert len(env._tokenize(instruction)) == len(env._embed(instruction)) == len(env._pieces(instruction))
+
+
+def multishape_objects(env):
+    """(color index, MULTISHAPE_NAMES index, position, bounding radius) of target0, then each distractor.
+
+    Checks that exactly one of the site and its mesh geoms is visible, and that the mesh body sits on the site.
+    """
+    m = env.sim.model
+    objects = []
+    for name in ['target0'] + [f'distractor{i}' for i in range(env.num_distractors)]:
+        site_id = m.site_name2id(name)
+        geoms = {shape: m.geom_name2id(f'{name}:{shape}') for shape in MESH_SHAPE_NAMES}
+        shown = [shape for shape, g in geoms.items() if m.geom_rgba[g][3] == 1 and m.geom_group[g] == 0]
+        hidden = [shape for shape, g in geoms.items() if m.geom_rgba[g][3] == 0 and m.geom_group[g] == 3]
+        assert len(shown) + len(hidden) == len(MESH_SHAPE_NAMES) and len(shown) <= 1
+        if shown:
+            assert m.site_rgba[site_id][3] == 0 and m.site_group[site_id] == 3
+            assert env.mesh_shapes[name] == shown[0]
+            rgb, shape = m.geom_rgba[geoms[shown[0]]][:3], MULTISHAPE_NAMES.index(shown[0])
+        else:
+            assert m.site_rgba[site_id][3] == 1 and m.site_group[site_id] == 0
+            assert name not in env.mesh_shapes
+            rgb, shape = m.site_rgba[site_id][:3], env.shape_geoms.index(int(m.site_type[site_id]))
+        assert np.allclose(env.sim.data.get_body_xpos(f'{name}:shapes'), site(env, name))
+        color = int(np.argmin(np.abs(env.colors - rgb).sum(1)))
+        objects.append((color, shape, site(env, name), env.site_radius(name)))
+    return objects
+
+
+@pytest.mark.parametrize('num_distractors', [0, 1, 2, 4])
+def test_shape_scene(num_distractors):
+    env = make(SHAPE.format(num_distractors))
+    target_shapes = set()
+    for _ in range(40):
+        env.reset()
+        objects = multishape_objects(env)
+        color, shape = objects[0][:2]
+        assert (color, shape) == (env.target_color, env.target_shape)
+        assert env.instruction == f"reach the {COLOR_NAMES[color]} {MULTISHAPE_NAMES[shape]}"
+        pairs = [o[:2] for o in objects]
+        assert len(set(pairs)) == len(pairs)  # the instruction names exactly one object
+        if num_distractors >= 1:
+            assert any(c == color and s != shape for c, s in pairs)  # same color, other shape
+        if num_distractors >= 2:
+            assert any(c != color and s == shape for c, s in pairs)  # same shape, other color
+        for (*_, pos_a, r_a), (*_, pos_b, r_b) in combinations(objects, 2):
+            assert np.linalg.norm(pos_a - pos_b) >= r_a + r_b - 1e-6  # bounding spheres do not overlap
+        target_shapes.add(shape)
+    assert target_shapes == set(range(len(MULTISHAPE_NAMES)))
+
+
+def test_mesh_radius_matches_compiled_mesh():
+    env = make(SHAPE.format(0))
+    env.reset()
+    m = env.sim.model
+    for shape in MESH_SHAPE_NAMES:
+        g = m.geom_name2id(f'target0:{shape}')
+        mesh = m.geom_dataid[g]
+        verts = m.mesh_vert[m.mesh_vertadr[mesh]:m.mesh_vertadr[mesh] + m.mesh_vertnum[mesh]]
+        world = env.sim.data.geom_xpos[g] + verts @ env.sim.data.geom_xmat[g].reshape(3, 3).T
+        # The compiler recenters the mesh; the shape is still centered on the site and fits its bounding sphere.
+        assert np.linalg.norm(world - site(env, 'target0'), axis=1).max() == pytest.approx(
+            env.target_size * env.mesh_radii[shape], rel=1e-4)
+        assert np.ptp(world, axis=0).max() <= 2 * env.target_size * env.mesh_radii[shape]
+
+
+def test_shape_info_and_language():
+    env = LanguageWrapper(make(SHAPE.format(2)))
+    env.action_space.seed(0)
+    for _ in range(3):
+        env.reset()
+        _, _, _, first = env.step(env.action_space.sample())
+        for _ in range(5):
+            _, _, _, info = env.step(env.action_space.sample())
+            check_step(info)
+            assert (info['target_color'], info['target_shape']) == (first['target_color'], first['target_shape'])
+        assert info['instruction'] == env.unwrapped.instruction
+        assert info['instruction'].endswith(
+            f"{COLOR_NAMES[info['target_color']]} {MULTISHAPE_NAMES[info['target_shape']]}")
+
+
+def test_shape_scripted_success():
+    env = make(SHAPE.format(4))
+    assert env.spec.max_episode_steps == 100
+    for _ in range(3):
+        env.reset()
+        for _ in range(episode_length('Reach')):
+            _, _, _, info = env.step(move_towards(env, site(env, 'target0'), 0.0))
+            check_step(info)
+        assert info['success']
+
+
+def test_mesh_shapes_are_twisted_but_still_face_the_camera():
+    env = make(SHAPE.format(4))
+    m, d = env.sim.model, env.sim.data
+    cam_rot = d.cam_xmat[m.camera_name2id('frontview')].reshape(3, 3)
+    tilts, rolls = [], []
+    for _ in range(20):
+        env.reset()
+        for name in ['target0'] + [f'distractor{i}' for i in range(4)]:
+            # Shape frame relative to the camera frame (identity when untwisted).
+            rel = cam_rot.T @ d.get_body_xmat(f'{name}:shapes')
+            tilts.append(np.degrees(np.arccos(np.clip(rel[2, 2], -1, 1))))  # outline normal vs view axis
+            rolls.append(np.degrees(np.arctan2(rel[1, 0], rel[0, 0])))
+    tilts, rolls = np.array(tilts), np.array(rolls)
+    max_tilt = np.degrees(np.hypot(env.MESH_MAX_TILT, env.MESH_MAX_TILT))
+    assert tilts.max() <= max_tilt + 1e-6 and tilts.max() > 5  # twisted, but never far from facing the camera
+    assert np.abs(rolls).max() <= np.degrees(env.MESH_MAX_ROLL) + 10 and np.std(rolls) > 5
+    # Twists are drawn per episode and site, not shared.
+    assert len(np.unique(np.round(rolls, 3))) == len(rolls)
+
+
+def test_cubes_are_twisted():
+    env = make(SHAPE.format(4))
+    m, d = env.sim.model, env.sim.data
+    yaws, tilts = [], []
+    for _ in range(30):
+        env.reset()
+        for name in ['target0'] + [f'distractor{i}' for i in range(4)]:
+            site_id = m.site_name2id(name)
+            rot = d.site_xmat[site_id].reshape(3, 3)
+            if name in env.mesh_shapes or m.site_type[site_id] != const.GEOM_BOX:
+                assert np.allclose(m.site_quat[site_id], [1, 0, 0, 0])  # only cubes are twisted
+                continue
+            tilts.append(np.degrees(np.arccos(np.clip(rot[2, 2], -1, 1))))  # cube's z vs world up
+            yaws.append(np.degrees(np.arctan2(rot[1, 0], rot[0, 0])))
+    assert len(yaws) > 5
+    max_tilt = np.degrees(np.hypot(env.CUBE_MAX_TILT, env.CUBE_MAX_TILT))
+    assert max(tilts) <= max_tilt + 1e-6 and max(tilts) > 5
+    assert np.std(yaws) > 10 and len(np.unique(np.round(yaws, 3))) == len(yaws)
+
+
+def test_other_reach_tasks_have_no_mesh_shapes():
+    env = make('ReachMulticolor_2Distractors_Dense-v1')
+    env.reset()
+    assert env.mesh_shapes == {} and env.sim.model.nmesh == make(SHAPE.format(2)).sim.model.nmesh - 3
+
+
+HELDOUT = {(COLOR_NAMES.index(c), MULTISHAPE_NAMES.index(sh)) for c, sh in MULTICOLORSHAPE_HELDOUT}
+
+
+def test_heldout_split_covers_every_color_and_shape():
+    assert len(HELDOUT) == len(MULTICOLORSHAPE_HELDOUT) == 4 * len(MULTISHAPE_NAMES)
+    train = {(c, sh) for c in range(len(COLOR_NAMES)) for sh in range(len(MULTISHAPE_NAMES))} - HELDOUT
+    for sh in range(len(MULTISHAPE_NAMES)):
+        assert sum(1 for p in train if p[1] == sh) == len(COLOR_NAMES) - 4
+    for c in range(len(COLOR_NAMES)):
+        assert sum(1 for p in train if p[0] == c) >= 3
+
+
+@pytest.mark.parametrize('split', ['Train', 'Val'])
+@pytest.mark.parametrize('num_distractors', [1, 4])
+def test_shape_split(split, num_distractors):
+    env = make(f'ReachMulticolorShape_{num_distractors}Distractors_Dense_{split}-v1')
+    assert env.split == split.lower()
+    for _ in range(40):
+        env.reset()
+        objects = multishape_objects(env)
+        pairs = [o[:2] for o in objects]
+        color, shape = pairs[0]
+        assert ((color, shape) in HELDOUT) == (split == 'Val')
+        if split == 'Train':
+            assert not set(pairs) & HELDOUT  # held-out pairs never appear in training, not even as distractors
+        assert len(set(pairs)) == len(pairs)
+        assert any(c == color and sh != shape for c, sh in pairs)  # same color, other shape
+        if num_distractors >= 2:
+            assert any(c != color and sh == shape for c, sh in pairs)  # same shape, other color
+        assert env.instruction == f"reach the {COLOR_NAMES[color]} {MULTISHAPE_NAMES[shape]}"
+
+
+def test_shape_custom_heldout_pairs():
+    heldout = [('red', 'star'), ('blue', 'moon')]
+    for split, check in [('val', lambda t, ps: t in heldout), ('train', lambda t, ps: not set(ps) & set(heldout))]:
+        env = gym.make('ReachMulticolorShape_2Distractors_Dense-v1', split=split, heldout_pairs=heldout).unwrapped
+        env.seed(0)
+        for _ in range(20):
+            env.reset()
+            names = [(COLOR_NAMES[c], MULTISHAPE_NAMES[sh]) for c, sh, *_ in multishape_objects(env)]
+            assert check(names[0], names)
+
+
+def test_shape_split_errors():
+    with pytest.raises(ValueError):
+        gym.make('ReachMulticolorShape_2Distractors_Dense-v1', split='test')
+    with pytest.raises(ValueError):
+        gym.make('ReachMulticolor_2Distractors_Dense-v1', split='train')
+    # Holding out every red pair but one leaves no same-color distractor for a red target in training.
+    env = gym.make('ReachMulticolorShape_1Distractors_Dense-v1', split='train',
+                   heldout_pairs=[('red', sh) for sh in MULTISHAPE_NAMES[1:]]).unwrapped
+    env.target_pairs = [(COLOR_NAMES.index('red'), 0)]
+    with pytest.raises(ValueError, match='same-color'):
+        env.reset()

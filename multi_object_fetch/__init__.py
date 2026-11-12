@@ -2,12 +2,14 @@ from gym.envs.registration import register
 
 
 for environment in ['Reach', 'Push', 'Pick']:
-    for task in ['Red', 'Reddest', 'Odd', 'OddGroups', 'Multicolor']:
+    for task in ['Red', 'Reddest', 'Odd', 'OddGroups', 'Multicolor', 'MulticolorShape']:
         for num_distractors in range(0, 5):
             for reward_type in ['Sparse', 'Dense']:
                 if task.startswith('Odd') and num_distractors < 2:  # Odd-one-out needs at least two others.
                     continue
                 if task == 'OddGroups' and num_distractors < 4:  # Odd with groups needs at least 2 x 2 others.
+                    continue
+                if task == 'MulticolorShape' and environment != 'Reach':  # Shapes are Reach sites only.
                     continue
 
                 initial_qpos = {
@@ -33,7 +35,7 @@ for environment in ['Reach', 'Push', 'Pick']:
                         kwargs['block_gripper'] = True
 
                 max_episode_steps = 50 if environment == 'Reach' else 100
-                if task == 'Multicolor':
+                if task in ('Multicolor', 'MulticolorShape'):
                     max_episode_steps *= 2
 
                 register(
@@ -42,6 +44,15 @@ for environment in ['Reach', 'Push', 'Pick']:
                     kwargs=kwargs,
                     max_episode_steps=max_episode_steps,
                 )
+                if task == 'MulticolorShape':
+                    # Held-out (color, shape) pairs: _Train never shows them, _Val always instructs one.
+                    for split in ['train', 'val']:
+                        register(
+                            id=f'{environment}{task}_{num_distractors}Distractors_{reward_type}_{split.capitalize()}-v1',
+                            entry_point='multi_object_fetch.env:ReachEnv',
+                            kwargs={**kwargs, 'split': split},
+                            max_episode_steps=max_episode_steps,
+                        )
 
 # Stack: put object0 on a tower of N blocks object1, ..., objectN (OntoN; OntoNFixed: the tower is welded in
 # place). Distractors are extra loose blocks.

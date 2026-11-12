@@ -34,10 +34,42 @@ Stack: put one block on another (e.g. `put the red block on the blue block`); bo
 python examples/run.py --policy user --task Onto1Fixed --num_distractors 2 --environment Stack
 ```
 
+MulticolorShape (Reach only): targets and distractors are spheres, cubes, or the Language Table block shapes moon,
+star and pentagon, and the instruction names color and shape (e.g. `reach the red star`). With at least one
+distractor, one of them has the target's color and another shape; with at least two, another has the target's shape
+and another color; every (color, shape) pair appears at most once. `target_shape` in `info` indexes
+`MULTISHAPE_NAMES`. The mesh shapes are visual only, like the sites: 8 cm across (the sphere's diameter), never
+touched by the gripper. They face the frontview camera, so the outline stays readable, with a random twist per
+episode for variety (up to 30 degrees in the outline's plane and 20 degrees out of it; `ReachEnv.MESH_MAX_ROLL` /
+`MESH_MAX_TILT`). Cubes are twisted too: any turn about the vertical and up to 20 degrees of tilt (`CUBE_MAX_YAW` /
+`CUBE_MAX_TILT`). The mesh shapes are STL files in `multi_object_fetch/assets/meshes`, converted from Language
+Table's OBJ blocks (MuJoCo 2.1 cannot read OBJ) with `scripts/convert_language_table_meshes.py`.
+```
+python examples/run.py --policy random --task MulticolorShape --num_distractors 4 --environment Reach
+```
+
+Held-out color-shape pairs, to test generalization to unseen combinations: `_Train` IDs (e.g.
+`ReachMulticolorShape_4Distractors_Dense_Train-v1`) never show a held-out pair, on the target or any distractor;
+`_Val` IDs always instruct a held-out pair (distractors may use any pair). IDs without a suffix use every pair. The
+default held-out pairs (`MULTICOLORSHAPE_HELDOUT`) are 4 colors per shape; every color still appears in training
+with at least 3 shapes, and both guaranteed distractors (same color, same shape) exist in every split:
+
+| shape | held-out colors |
+|:--|:--|
+| sphere | green, dark slate gray, saddle brown, midnight blue |
+| cube | dark green, dark khaki, turquoise, red |
+| moon | orange, yellow, violet red, blue |
+| star | spring green, thistle, magenta, dodger blue |
+| pentagon | green, dark slate gray, saddle brown, midnight blue |
+
+Other pairs can be held out with `gym.make(..., split='train' or 'val', heldout_pairs=[('red', 'star'), ...])`.
+The `_Train` / `_Val` IDs have a fourth `_`-separated part, so they go through `gym.make`; dynalang's `mof_` task
+names (`{Env}{Task}_{n}Distractors_{Reward}-v1`) do not parse them.
+
 The following arguments are used to configure the environments and can be tested in `examples/run.py`:
 - `policy`: Whether to control the agent via the keyboard or run a random policy be in `random`, `user`.
 - `environment`: Selects the environment to run and can be in `Reach`, `Push`, `Pick`, and `Stack`.
-- `task`: Selects which task to run and can be in `Red`, `Reddest`, `Odd`, `OddGroups`, and `Multicolor` (Reach, Push, Pick), or `Onto1`, `Onto1Fixed`, `Onto2` and `Onto2Fixed` (Stack).
+- `task`: Selects which task to run and can be in `Red`, `Reddest`, `Odd`, `OddGroups`, `Multicolor`, and `MulticolorShape` (Reach only), or `Onto1`, `Onto1Fixed`, `Onto2` and `Onto2Fixed` (Stack).
 - `num_distractors`: Number of distractor targets/blocks to use in the environment.
 - `no_language`: Disable HomeGrid-style parallel token streaming.
 - `no_viz`: Disable the on-frame instruction overlay.
@@ -58,3 +90,4 @@ python scripts/embed_offline.py \
 
 ## Credits
 This repository is an extension of the environments in [fetch-block-construction](https://github.com/richardrl/fetch-block-construction).
+The moon, star and pentagon meshes are from [Language Table](https://github.com/google-research/language-table) (Apache 2.0).
