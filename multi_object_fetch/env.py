@@ -6,7 +6,7 @@ import numpy as np
 from fetch_block_construction.envs.robotics.fetch.construction import FetchBlockConstructionEnv
 from fetch_block_construction.envs.robotics import fetch_env
 from gym import utils as gym_utils
-from typing import Dict, Any, Tuple
+from typing import Dict, Any, Optional, Sequence, Tuple
 from multi_object_fetch.assets.generate_multi_camera_xml import generate_multi_camera_xml
 from mujoco_py.generated import const
 from mujoco_py.modder import TextureModder
@@ -17,7 +17,36 @@ import tempfile
 from pathlib import Path
 from importlib.resources import files
 from mujoco_py.builder import MujocoException
-from multi_object_fetch.language.instructions import COLOR_NAMES, SHAPE_NAMES, build_instruction
+from multi_object_fetch.language.instructions import (
+    COLOR_NAMES, MESH_SHAPE_NAMES, MULTICOLORSHAPES_HELDOUT, MULTISHAPE_NAMES, SHAPE_NAMES, build_instruction,
+)
+
+MESH_DIR = Path(__file__).resolve().parent / "assets" / "meshes"
+# Model geom/site group that the default render options hide (groups 0-2 are shown).
+HIDDEN_GROUP = 3
+
+
+def quat_mul(a, b) -> np.ndarray:
+    """Hamilton product of (w, x, y, z) quaternions."""
+    aw, ax, ay, az = a
+    bw, bx, by, bz = b
+    return np.array([aw * bw - ax * bx - ay * by - az * bz, aw * bx + ax * bw + ay * bz - az * by,
+                     aw * by - ax * bz + ay * bw + az * bx, aw * bz + ax * by - ay * bx + az * bw])
+
+
+def axis_quat(axis: int, angle: float) -> np.ndarray:
+    q = np.zeros(4)
+    q[0], q[1 + axis] = np.cos(angle / 2), np.sin(angle / 2)
+    return q
+
+
+def mesh_radius(path: Path) -> float:
+    """Distance from the origin to the farthest vertex of a binary STL."""
+    data = path.read_bytes()
+    num_triangles = int(np.frombuffer(data, dtype="<u4", count=1, offset=80)[0])
+    record = np.dtype([("normal", "<f4", 3), ("vertices", "<f4", (3, 3)), ("attr", "<u2")])
+    triangles = np.frombuffer(data, dtype=record, count=num_triangles, offset=84)
+    return float(np.linalg.norm(triangles["vertices"].reshape(-1, 3), axis=1).max())
 
 
 def prepare_fetch_assets() -> Path:
@@ -147,7 +176,7 @@ class MultiObjectFetchEnv(fetch_env.FetchEnv, gym_utils.EzPickle, ColorsMixin, A
             viewpoint (str): The camera viewpoint to use for rendering.
             environment (str): High-level motor skill: Reach, Push, or Pick.
             task (str): Relational color task: Red, Reddest, Odd, OddGroups, Multicolor, or
-                MulticolorShape (Reach only).
+                MulticolorShape / Multicolorshapes (Reach only).
         """
         self.obs_type = obs_type
         self.object_size = object_size
@@ -161,7 +190,7 @@ class MultiObjectFetchEnv(fetch_env.FetchEnv, gym_utils.EzPickle, ColorsMixin, A
         # Multicolor instruction depends on the episode's target color (set in _reset_sim).
         self.instruction = (
             ""
-            if task in ("Multicolor", "MulticolorShape")
+            if task in ("Multicolor", "MulticolorShape", "Multicolorshapes")
             else build_instruction(environment, task)
         )
 
@@ -253,22 +282,55 @@ class MultiObjectFetchEnv(fetch_env.FetchEnv, gym_utils.EzPickle, ColorsMixin, A
 
 
 class ReachEnv(MultiObjectFetchEnv):
+    # Multicolorshapes: random twist of each mesh shape away from facing the frontview camera, for variety.
+    # Up to MESH_MAX_ROLL in the outline's plane, up to MESH_MAX_TILT out of it (the outline keeps >= cos(tilt)
+    # of its width, so it stays readable). Rotations are about the shape's center: bounding spheres do not change.
+    MESH_MAX_ROLL = np.radians(30)
+    MESH_MAX_TILT = np.radians(20)
+    # Cubes get any turn about the vertical (+-45 degrees covers all, a cube repeats every 90) and the same tilt.
+    CUBE_MAX_YAW = np.radians(45)
+    CUBE_MAX_TILT = MESH_MAX_TILT
 
     def __init__(self, initial_qpos: Dict[str, Any], obs_type: str = "dictstate", object_size: float = 0.045,
                  target_size: float = 0.04, robot_configuration: str = "default", viewpoint: str = "frontview",
                  num_distractors: int = 1, reward_type: str = "Dense", task: str = "Red", width: int = 512,
-                 height: int = 512, environment: str = "Reach") -> None:
+                 height: int = 512, environment: str = "Reach", split: Optional[str] = None,
+                 heldout_pairs: Optional[Sequence[Tuple[str, str]]] = None) -> None:
+        """split (Multicolorshapes only): None uses every (color, shape) pair; "train" never shows a held-out pair,
+        on any object; "val" always instructs a held-out pair (distractors may use any pair). heldout_pairs:
+        (color name, shape name) pairs to hold out, MULTICOLORSHAPES_HELDOUT by default."""
         super().__init__(
             initial_qpos, obs_type, object_size, target_size, robot_configuration, viewpoint,
             environment=environment, task=task,
         )
         self.num_distractors = num_distractors
+        if split not in (None, 'train', 'val'):
+            raise ValueError(f"Invalid split: {split}")
+        if split is not None and task != 'Multicolorshapes':
+            raise ValueError("split is only supported by Multicolorshapes")
+        self.split = split
+        heldout = {(COLOR_NAMES.index(c), MULTISHAPE_NAMES.index(s))
+                   for c, s in (MULTICOLORSHAPES_HELDOUT if heldout_pairs is None else heldout_pairs)}
+        pairs = [(c, s) for c in range(len(COLOR_NAMES)) for s in range(len(MULTISHAPE_NAMES))]
+        # (color index, MULTISHAPE_NAMES index) pairs the target / any object may use.
+        self.target_pairs = [p for p in pairs if (p in heldout) == (split == 'val')] if split else pairs
+        self.object_pairs = [p for p in pairs if p not in heldout] if split == 'train' else pairs
+        self.heldout_pairs = sorted(heldout)
         self.width = width
         self.height = height
 
+        # Multicolorshapes: Language Table shapes as mesh geoms next to the sites (see generate_multi_camera_xml).
+        shape_meshes = ({shape: MESH_DIR / f"{shape}.stl" for shape in MESH_SHAPE_NAMES}
+                        if task == 'Multicolorshapes' else None)
+        # Bounding-sphere radius of each mesh shape, in target sizes.
+        self.mesh_radii = {shape: mesh_radius(path) for shape, path in (shape_meshes or {}).items()}
+        # Site name -> mesh shape name shown at it this episode (set in _reset_sim).
+        self.mesh_shapes = {}
+
         fetch_cache = prepare_fetch_assets()
         with tempfile.NamedTemporaryFile(mode='wt', dir=fetch_cache / "fetch", delete=False, suffix=".xml") as fp:
-            fp.write(generate_multi_camera_xml(num_distractors, self.robot, task='reach', target_size=target_size))
+            fp.write(generate_multi_camera_xml(num_distractors, self.robot, task='reach', target_size=target_size,
+                                               shape_meshes=shape_meshes))
             MODEL_XML_PATH = fp.name
 
         fetch_env.FetchEnv.__init__(
@@ -278,13 +340,16 @@ class ReachEnv(MultiObjectFetchEnv):
             obs_type=obs_type, render_size=0)
 
         gym_utils.EzPickle.__init__(self, initial_qpos, obs_type, object_size, target_size, robot_configuration,
-                                    viewpoint, num_distractors, reward_type, task, width, height, environment)
+                                    viewpoint, num_distractors, reward_type, task, width, height, environment,
+                                    split, heldout_pairs)
         os.remove(MODEL_XML_PATH)
 
 
 
     def site_radius(self, name):
         """Bounding-sphere radius of a target/distractor site: a cube's corners reach sqrt(3) half-sizes out."""
+        if name in self.mesh_shapes:
+            return self.target_size * self.mesh_radii[self.mesh_shapes[name]]
         site_id = self.sim.model.site_name2id(name)
         size = self.sim.model.site_size[site_id][0]
         return size * np.sqrt(3) if self.sim.model.site_type[site_id] == const.GEOM_BOX else size
@@ -301,6 +366,9 @@ class ReachEnv(MultiObjectFetchEnv):
         super()._env_setup(initial_qpos)
         self.height_offset = self.sim.data.get_body_xpos('table0')[2]
         self.table_size = self.sim.model.geom_size[self.sim.model.geom_name2id('table0')]
+        if self.task == 'Multicolorshapes':
+            # Untwisted orientation of the mesh shapes (facing the frontview camera), the same for every site.
+            self.mesh_base_quat = self.sim.model.body_quat[self.sim.model.body_name2id('target0:shapes')].copy()
 
     def _reset_sim(self):
         super()._reset_sim()
@@ -389,6 +457,67 @@ class ReachEnv(MultiObjectFetchEnv):
                 self.sim.model.site_rgba[site_id][:3] = self.colors[c]
                 self.sim.model.site_type[site_id] = self.shape_geoms[s]
 
+        elif self.task == 'Multicolorshapes':
+            assert len(self.color_names) == len(self.colors) and len(SHAPE_NAMES) == len(self.shape_geoms)
+
+            def pick(candidates, why):
+                if not candidates:
+                    raise ValueError(f"No (color, shape) pair left for {why} (split={self.split}); "
+                                     "hold out fewer pairs")
+                return candidates[int(self.np_random.choice(len(candidates)))]
+
+            # Pairs come from self.target_pairs / self.object_pairs (see split in __init__).
+            color, shape = pick(self.target_pairs, "the target")
+            objects = [(color, shape)]
+            if self.num_distractors > 0:
+                # The target's color with another shape, so color alone is not enough.
+                objects.append(pick([(c, s) for c, s in self.object_pairs if c == color and s != shape],
+                                    "a same-color distractor"))
+            if self.num_distractors > 1:
+                # The target's shape with another color, so shape alone is not enough.
+                objects.append(pick([(c, s) for c, s in self.object_pairs if s == shape and c != color],
+                                    "a same-shape distractor"))
+            # The rest get unused (color, shape) pairs, so the instruction always names exactly one object.
+            unused = [p for p in self.object_pairs if p not in objects]
+            if len(unused) < 1 + self.num_distractors - len(objects):
+                raise ValueError(f"Not enough (color, shape) pairs for the distractors (split={self.split})")
+            for k in self.np_random.choice(len(unused), size=1 + self.num_distractors - len(objects), replace=False):
+                objects.append(unused[int(k)])
+
+            self.target_color, self.target_shape = color, shape
+            self.instruction = build_instruction(
+                self.environment, self.task, color_name=self.color_names[color], shape_name=MULTISHAPE_NAMES[shape]
+            )
+            # Primitive shapes are drawn by the site; mesh shapes by the site's mesh geom, with the site hidden.
+            self.mesh_shapes = {}
+            site_names = ['target0'] + [f'distractor{i}' for i in range(self.num_distractors)]
+            for name, (c, s) in zip(site_names, objects):
+                site_id = self.sim.model.site_name2id(name)
+                is_mesh = s >= len(SHAPE_NAMES)
+                self.sim.model.site_rgba[site_id] = (*self.colors[c], 0 if is_mesh else 1)
+                self.sim.model.site_group[site_id] = HIDDEN_GROUP if is_mesh else 0
+                if not is_mesh:
+                    self.sim.model.site_type[site_id] = self.shape_geoms[s]
+                else:
+                    self.mesh_shapes[name] = MULTISHAPE_NAMES[s]
+                for mesh_shape in MESH_SHAPE_NAMES:
+                    geom_id = self.sim.model.geom_name2id(f'{name}:{mesh_shape}')
+                    shown = mesh_shape == self.mesh_shapes.get(name)
+                    self.sim.model.geom_rgba[geom_id] = (*self.colors[c], 1 if shown else 0)
+                    self.sim.model.geom_group[geom_id] = 0 if shown else HIDDEN_GROUP
+                # Twist in the shape's frame (z: outline normal, toward the camera): tilt about x and y, roll about z.
+                tilt_x, tilt_y = self.np_random.uniform(-self.MESH_MAX_TILT, self.MESH_MAX_TILT, size=2)
+                roll = self.np_random.uniform(-self.MESH_MAX_ROLL, self.MESH_MAX_ROLL)
+                twist = quat_mul(quat_mul(axis_quat(0, tilt_x), axis_quat(1, tilt_y)), axis_quat(2, roll))
+                self.sim.model.body_quat[self.sim.model.body_name2id(f'{name}:shapes')] = quat_mul(
+                    self.mesh_base_quat, twist)
+                # Cube twist in the world frame (z up): yaw, then tilt about x and y; other sites stay untwisted.
+                yaw = self.np_random.uniform(-self.CUBE_MAX_YAW, self.CUBE_MAX_YAW)
+                cube_tilt_x, cube_tilt_y = self.np_random.uniform(-self.CUBE_MAX_TILT, self.CUBE_MAX_TILT, size=2)
+                cube_twist = quat_mul(quat_mul(axis_quat(2, yaw), axis_quat(0, cube_tilt_x)), axis_quat(1, cube_tilt_y))
+                is_cube = not is_mesh and self.shape_geoms[s] == const.GEOM_BOX
+                self.sim.model.site_quat[site_id] = cube_twist if is_cube else (1, 0, 0, 0)
+
         else:
             raise ValueError("Invalid task: {}".format(self.task))
 
@@ -416,6 +545,15 @@ class ReachEnv(MultiObjectFetchEnv):
 
         self.sim.forward()
         return True
+
+    def _render_callback(self):
+        super()._render_callback()
+        if self.task == 'Multicolorshapes':
+            # Mesh shapes follow their sites (both are placed relative to floor0).
+            for name in ['target0'] + [f'distractor{i}' for i in range(self.num_distractors)]:
+                body_id = self.sim.model.body_name2id(f'{name}:shapes')
+                self.sim.model.body_pos[body_id] = self.sim.model.site_pos[self.sim.model.site_name2id(name)]
+            self.sim.forward()
 
     def reset(self):
         self.goal = self._sample_goal().copy()

@@ -84,3 +84,51 @@ reach the magenta sphere
 reach the magenta cube
 reach the dodger blue sphere
 reach the dodger blue cube
+reach the green moon
+reach the green star
+reach the green pentagon
+reach the dark slate gray moon
+reach the dark slate gray star
+reach the dark slate gray pentagon
+reach the saddle brown moon
+reach the saddle brown star
+reach the saddle brown pentagon
+reach the midnight blue moon
+reach the midnight blue star
+reach the midnight blue pentagon
+reach the dark green moon
+reach the dark green star
+reach the dark green pentagon
+reach the dark khaki moon
+reach the dark khaki star
+reach the dark khaki pentagon
+reach the turquoise moon
+reach the turquoise star
+reach the turquoise pentagon
+reach the red moon
+reach the red star
+reach the red pentagon
+reach the orange moon
+reach the orange star
+reach the orange pentagon
+reach the yellow moon
+reach the yellow star
+reach the yellow pentagon
+reach the violet red moon
+reach the violet red star
+reach the violet red pentagon
+reach the blue moon
+reach the blue star
+reach the blue pentagon
+reach the spring green moon
+reach the spring green star
+reach the spring green pentagon
+reach the thistle moon
+reach the thistle star
+reach the thistle pentagon
+reach the magenta moon
+reach the magenta star
+reach the magenta pentagon
+reach the dodger blue moon
+reach the dodger blue star
+reach the dodger blue pentagon
