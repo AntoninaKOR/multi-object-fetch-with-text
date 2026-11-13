@@ -17,6 +17,18 @@ from gym import spaces
 from multi_object_fetch.utils.viz import overlay_language
 
 
+class _CacheUnpickler(pickle.Unpickler):
+    """Loads caches pickled under numpy 2 (module numpy._core) with numpy 1 (numpy.core)."""
+
+    def find_class(self, module: str, name: str) -> Any:
+        try:
+            return super().find_class(module, name)
+        except ModuleNotFoundError:
+            if not module.startswith("numpy._core"):
+                raise
+            return super().find_class("numpy.core" + module[len("numpy._core"):], name)
+
+
 class LanguageWrapper(gym.Wrapper):
     """Stream task instructions one token per timestep while the agent acts.
 
@@ -58,7 +70,7 @@ class LanguageWrapper(gym.Wrapper):
                 "Generate it with: python scripts/embed_offline.py"
             )
         with open(embeds_path, "rb") as f:
-            payload = pickle.load(f)
+            payload = _CacheUnpickler(f).load()
         if len(payload) == 2:
             raise ValueError(
                 f"{embeds_path} is missing per-token string cache. "
